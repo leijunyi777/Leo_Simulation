@@ -597,7 +597,7 @@
     </xacro:if>
 
     <xacro:leo default_antenna="${default_antenna}"
-               rockers_fixed="false"
+               rockers_fixed="true"
                link_prefix="${link_prefix}"
                mecanum_wheels="${mecanum_wheels}"/>
 
