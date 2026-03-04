@@ -1,0 +1,54 @@
+slam_toolbox:
+  ros__parameters:
+    use_sim_time: true
+    # ================= 1. 基础系统参数 =================
+    odom_frame: odom               # 里程计坐标系
+    map_frame: map                 # 地图坐标系
+    base_frame: base_link          # 机器人基础坐标系
+    scan_topic: /scan              # 激光雷达订阅的话题名
+    use_map_saver: true            # 允许使用内置的地图保存服务
+    mode: mapping                  # 模式：mapping(建图) 或 localization(纯定位)
+
+    # ================= 2. 核心建图参数 =================
+    # 这部分参数直接决定了地图的精度和更新频率
+    debug_logging: false           # 是否开启底层调试日志
+    throttle_scans: 1              # 降采样：设为1表示处理每一帧雷达数据，设为2表示每两帧处理一帧（节约CPU）
+    transform_publish_period: 0.02 # 发布 map->odom TF 的时间间隔（0.05秒 = 20Hz）
+    map_update_interval: 1.0       # 向 ROS 发布二维栅格地图的话题更新间隔（秒）。调小会让 RViz 显示得更实时，但耗费算力
+    resolution: 0.05               # 地图分辨率：0.05 表示地图上的一个像素代表真实世界里的 5 厘米
+    max_laser_range: 12.0          # 雷达最大可用测距（根据我们在 SDF 里写的雷达参数，最大是 12.0 米）
+    minimum_time_interval: 0.5     # 两次扫描匹配之间的最小时间间隔（秒）
+    transform_timeout: 0.2         # 等待 TF 树变换的超时时间
+    tf_buffer_duration: 30.0       # TF 缓存时长
+
+    # ================= 3. 运动触发参数 =================
+    # 决定机器人走多远或转多大角度才往地图里插入一个新的关键帧（节点）
+    minimum_travel_distance: 0.1   # 至少移动 0.3 米插入一个关键帧（走得慢可以调小）
+    minimum_travel_heading: 0.1    # 至少旋转 0.3 弧度（约17度）插入一个关键帧
+    scan_buffer_size: 10           # 雷达扫描匹配时的缓存区大小
+    scan_buffer_maximum_scan_distance: 10.0 # 扫描缓存的最大有效距离
+
+    # ================= 4. 扫描匹配器 (Scan Matcher) 参数 =================
+    # 决定了新来的雷达点云与已有地图贴合的严格程度
+    link_match_minimum_response_fine: 0.1  # 精细匹配的最小响应阈值（越高要求匹配得越严丝合缝）
+    link_scan_maximum_distance: 1.5        # 用于匹配的扫描线最大距离
+    distance_variance_penalty: 0.5         # 距离方差惩罚权重
+    angle_variance_penalty: 1.0            # 角度方差惩罚权重
+
+    # ================= 5. 闭环检测 (Loop Closure) 参数 =================
+    # 机器人在绕了一圈回到原地时，消除累计误差的关键算法
+    do_loop_closing: true                  # 是否开启闭环检测（建图必开！）
+    loop_match_minimum_chain_size: 10      # 触发闭环所需的最小节点链长度
+    loop_match_maximum_variance_coarse: 3.0 # 粗匹配的最大方差
+    loop_match_minimum_response_coarse: 0.35 # 粗匹配的最小响应阈值
+    loop_match_minimum_response_fine: 0.45   # 精细匹配的最小响应阈值（如果发现误闭环，把这个值调高）
+
+    # ================= 6. 相关性搜索 (Correlation Search) 参数 =================
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    # ================= 7. 闭环搜索窗口参数 =================
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
