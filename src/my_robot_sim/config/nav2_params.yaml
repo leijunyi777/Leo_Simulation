@@ -10,7 +10,7 @@ bt_navigator:
   ros__parameters:
     use_sim_time: True             # [必填] 是否使用 Gazebo 发布的虚拟时间
     global_frame: map              # 整个导航系统的最高层全局静态坐标系
-    robot_base_frame: base_link    # 机器人本体中心所在的坐标系
+    robot_base_frame: base_footprint    # 机器人本体中心所在的坐标系
     odom_topic: /odom              # 订阅系统里程计的话题名称
     # 默认加载的行为树 XML 文件。这个默认文件包含了完整的重规划、避障和卡死恢复逻辑
     default_bt_xml_filename: "navigate_to_pose_w_replanning_and_recovery.xml"
@@ -59,7 +59,7 @@ controller_server:
       transform_tolerance: 0.5
       
       # --- 核心杀手锏：允许原地转弯！ ---
-      use_rotate_to_heading: true        # 允许原地转弯对准路径！
+      use_rotate_to_heading: false        # 允许原地转弯对准路径！
       rotate_to_heading_min_angle: 0.5   # 当路径偏离超过 0.5 弧度（约30度）时，先停下原地转，再走！
       rotate_to_heading_angular_vel: 1.0 # 原地转弯的速度
       
@@ -100,7 +100,7 @@ local_costmap:
       update_frequency: 5.0        # 内部计算和合并图层的频率 (5Hz)
       publish_frequency: 2.0       # 向 ROS 系统 (如 RViz) 发送供显示的频率 (2Hz)
       global_frame: odom           # 局部地图的参考坐标系（通常依赖里程计而不是全局静态图）
-      robot_base_frame: base_link  # 机器人的中心坐标系
+      robot_base_frame: base_footprint  # 机器人的中心坐标系
       use_sim_time: True
       rolling_window: true         # 滚动窗口：为 True 表示局部地图始终以机器人为中心，跟着机器人一起移动
       width: 3                     # 局部地图的横向宽度 (米)
@@ -145,7 +145,7 @@ global_costmap:
       update_frequency: 1.0        # 全局地图较大，更新频率不需要太快 (1Hz 即可)
       publish_frequency: 1.0       # 发布频率 (1Hz)
       global_frame: map            # 参考坐标系锁定为最高级的 map
-      robot_base_frame: base_link
+      robot_base_frame: base_footprint
       use_sim_time: True
       robot_radius: 0.25           # 全局地图也要知道机器人半径大小以作规划
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
@@ -182,7 +182,7 @@ global_costmap:
 collision_monitor:
   ros__parameters:
     use_sim_time: True
-    base_frame_id: "base_link"
+    base_frame_id: "base_footprint"
     odom_frame_id: "odom"
     
     # --- 速度指令拦截通道 ---
@@ -286,7 +286,7 @@ docking_server:
     undock_linear_tolerance: 0.05
     undock_angular_tolerance: 0.1
     max_retries: 3
-    base_frame: "base_link"
+    base_frame: "base_footprint"
     odom_frame: "odom"
     # 就是这个参数缺失导致了你刚才的报错！
     dock_plugins: ["simple_dock"]

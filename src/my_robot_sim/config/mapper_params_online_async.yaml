@@ -16,7 +16,7 @@ slam_toolbox:
     # ==========================================
     odom_frame: odom                                  # 里程计坐标系名称 (必须与你的TF树匹配)
     map_frame: map                                    # 地图全局坐标系名称
-    base_frame: base_link                             # 机器人基座坐标系名称 (有些车叫 base_link)
+    base_frame: base_footprint                             # 机器人基座坐标系名称 (有些车叫 base_link)
     scan_topic: /scan                                 # 订阅的二维激光雷达话题
     use_map_saver: true                               # 是否允许通过 ROS 2 service 请求保存地图
     mode: mapping                                     # 运行模式：mapping(建图) 或 localization(定位)
@@ -79,4 +79,4 @@ slam_toolbox:
     minimum_distance_penalty: 0.3                     # 基础距离惩罚系数
     use_response_expansion: true                      # 匹配得分不高时，是否允许算法动态扩大搜索范围
     min_pass_through: 2                               # 激光射线穿过同一个空白网格2次，才将其确认为空闲(Free)
-    occupancy_threshold: 0.25                          # 占用概率阈值 (算法算出大于0.1则在地图上画黑色的障碍物)
+    occupancy_threshold: 0.4                          # 占用概率阈值 (算法算出大于0.1则在地图上画黑色的障碍物)

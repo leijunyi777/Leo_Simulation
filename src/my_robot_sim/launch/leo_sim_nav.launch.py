@@ -1,6 +1,6 @@
 import os
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, TimerAction, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
@@ -20,6 +20,7 @@ def generate_launch_description():
     bridge_config = os.path.join(sim_pkg_dir, 'config', 'bridge.yaml')
     slam_params_file = os.path.join(sim_pkg_dir, 'config', 'mapper_params_online_async.yaml')
     nav2_params_file = os.path.join(sim_pkg_dir, 'config', 'nav2_params.yaml')
+    rviz_config_file = os.path.join(sim_pkg_dir, 'rviz', 'sim.rviz')
 
     # ================= 修改点 3：使用 Command 动态解析 xacro =================
     # 以前是直接 read() 文本，现在需要调用系统命令 'xacro' 转换它
@@ -52,8 +53,32 @@ def generate_launch_description():
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
-        arguments=['-world', 'simple_room','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.5'],
+        arguments=['-world', 'simple_room','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.02'],
         output='screen'
+    )
+
+    delayed_spawn = TimerAction(
+        period=8.0,  # 延迟时间（秒），如果电脑加载 Gazebo 较慢，可以改成 8.0 或 10.0
+        actions=[spawn_robot]
+    )
+
+    # 使用 ros2 命令行工具，只发送一次 (--once) 全 0 的速度指令
+    kickstart_odom = ExecuteProcess(
+        cmd=[
+            'ros2', 'topic', 'pub', 
+            '-t','30',
+            '-r','10', 
+            '/cmd_vel', 
+            'geometry_msgs/msg/Twist', 
+            '{linear: {x: 0.001, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.0}}'
+        ],
+        output='screen'
+    )
+
+    # 延迟 8 秒执行（等小车出生并在 Gazebo 里加载稳妥后，再发指令）
+    delayed_kickstart = TimerAction(
+        period=12.0, 
+        actions=[kickstart_odom]
     )
 
     # 5. ROS-GZ 桥接
@@ -93,7 +118,12 @@ def generate_launch_description():
     rviz2_node = Node(
         package='rviz2',
         executable='rviz2',
-        parameters=[{'use_sim_time': True}]
+        name='rviz2',
+        # 使用 arguments 加载配置文件
+        arguments=['-d', rviz_config_file],
+        # 参数设置
+        parameters=[{'use_sim_time': True}],
+        output='screen'
     )
 
     # 10. 启动 SLAM Toolbox
@@ -111,10 +141,11 @@ def generate_launch_description():
         gz_sim,
         robot_state_publisher,
         joint_state_publisher,
-        spawn_robot,
         bridge,
-        static_tf_node,
-        teleop_node,
+        delayed_spawn,
+        delayed_kickstart,
+        #static_tf_node,
+        #teleop_node,
         rviz2_node,
         slam_toolbox_node,
         nav2_bringup_node

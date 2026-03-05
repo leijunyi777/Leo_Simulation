@@ -44,8 +44,8 @@ class NavControllerNode(Node):
         }
 
         # 探索边界限制 (确保别把坐标发到墙外面去)
-        self.map_limit_x = (-4.0, 4.0)
-        self.map_limit_y = (-4.0, 4.0)
+        self.map_limit_x = (-2.0, 2.0)
+        self.map_limit_y = (-2.0, 2.0)
 
         # === 3. 话题发布与订阅 ===
         self.pub_move_fb = self.create_publisher(Bool, '/move_feedback', 10)
