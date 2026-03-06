@@ -1,8 +1,4 @@
-这是一个为你量身定制的完整 `README.md` 文档，涵盖了我们之前调试的所有核心特性（包括自动唤醒、滑动转向优化、以及你刚写的导航微服务接口）。
 
-你可以直接点击代码块右上角的**“复制”**按钮，将内容粘贴到你工作空间根目录的 `README.md` 文件中：
-
-```markdown
 # 🤖 Leo Rover Autonomous Navigation Simulation
 
 本项目是一个基于 **ROS 2 Jazzy** 和 **Gazebo Harmonic** 的移动机器人全栈仿真工作空间。核心模型基于 Leo Rover（四轮滑移转向底盘），深度集成了 SLAM Toolbox（实时建图）、Nav2（自主导航）以及基于状态机的导航控制微服务，实现了在室内环境中的自主探索、目标抓取与放置的闭环控制。
