@@ -1,2 +1,0 @@
-bool error_state
-int32 error_number
