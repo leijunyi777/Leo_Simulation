@@ -15,7 +15,7 @@ def generate_launch_description():
     # 修改点 1：指向 leo_description 包中的 xacro 文件，用于生成 robot_description 话题
     urdf_file = os.path.join(leo_pkg_dir, 'urdf', 'leo_sim.urdf.xacro') 
     # 修改点 2：指向我们刚刚创建的新房间
-    world_file = os.path.join(sim_pkg_dir, 'worlds', 'simple_room.sdf')  
+    world_file = os.path.join(sim_pkg_dir, 'worlds', 'testing_world.sdf')  
     # world_file = os.path.join(sim_pkg_dir, 'worlds', 'testing_world.sdf') 
     #os.path.join: 将多个路径组合成一个路径，用于获取文件路径
     bridge_config = os.path.join(sim_pkg_dir, 'config', 'bridge.yaml')
@@ -56,7 +56,7 @@ def generate_launch_description():
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
-        arguments=['-world', 'simple_room','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.02'],
+        arguments=['-world', 'testing_world','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.02'],
         output='screen'
     )
 
