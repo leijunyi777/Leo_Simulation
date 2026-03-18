@@ -1,0 +1,82 @@
+slam_toolbox:
+  ros__parameters:
+
+    # ==========================================
+    # 插件参数 (Plugin Params) - 底层优化器配置
+    # ==========================================
+    solver_plugin: solver_plugins::CeresSolver        # 后端优化器，默认使用 Ceres Solver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY       # 线性求解器类型，适用于SLAM的稀疏矩阵问题
+    ceres_preconditioner: SCHUR_JACOBI                # 预处理方法，用于加速优化迭代收敛
+    ceres_trust_strategy: LEVENBERG_MARQUARDT         # 信赖域策略，经典的 LM 非线性最小二乘算法
+    ceres_dogleg_type: TRADITIONAL_DOGLEG             # Dogleg 策略类型（作为LM的备用/辅助）
+    ceres_loss_function: None                         # 损失函数，None 表示标准最小二乘（无鲁棒核函数）
+
+    # ==========================================
+    # ROS 系统参数 (ROS Parameters) - 话题与系统级配置
+    # ==========================================
+    odom_frame: odom                                  # 里程计坐标系名称 (必须与你的TF树匹配)
+    map_frame: map                                    # 地图全局坐标系名称
+    base_frame: base_footprint                             # 机器人基座坐标系名称 (有些车叫 base_link)
+    scan_topic: /scan_filtered                                 # 四轮过滤后的雷达（与 launch 中 four_wheel_filter 的 remapping 一致）
+    use_map_saver: true                               # 是否允许通过 ROS 2 service 请求保存地图
+    mode: mapping                                     # 运行模式：mapping(建图) 或 localization(定位)
+
+    debug_logging: false                              # 是否开启底层算法的调试日志（平时建议关闭）
+    throttle_scans: 1                                 # 雷达截流：1表示处理每一帧，2表示每两帧处理一帧以省CPU
+    transform_publish_period: 0.02                    # 发布 map -> odom TF 的周期 (0.02秒 = 50Hz)
+    map_update_interval: 0.2                          # 向话题发布可视化二维栅格地图的间隔时间 (秒)
+    resolution: 0.05                                  # 地图分辨率：0.05 代表每个像素是 5cm x 5cm
+    restamp_tf: false                                 # 是否用系统当前时间覆盖雷达的时间戳
+    min_laser_range: 0.0                              # 构建地图时，丢弃小于此距离的雷达点 (米)
+    max_laser_range: 20.0                             # 构建地图时，丢弃大于此距离的雷达点 (米)
+    minimum_time_interval: 0.1                        # 往位姿图中插入新节点的最小时间间隔 (秒)
+    transform_timeout: 0.5                            # 等待 TF 树变换的超时时间 (秒)
+    tf_buffer_duration: 30.0                           # TF 缓存保留的时间长度 (秒)
+    stack_size_to_use: 40000000                       # 序列化地图时分配的线程栈大小 (约 40MB，防溢出)
+    enable_interactive_mode: true                     # 是否在 RViz 中开启交互模式（允许手动拖拽修正节点）
+
+    # ==========================================
+    # 通用建图参数 (General Parameters) - 节点插入与闭环触发
+    # ==========================================
+    use_scan_matching: true                           # 必须开启：使用雷达扫描匹配来修正轮式里程计
+    use_scan_barycenter: true                         # 使用扫描点的几何重心作为匹配的中心基准
+    minimum_travel_distance: 0.02                      # 机器人平移超过 0.5 米，才会记录一个新的地图节点
+    minimum_travel_heading: 0.02                       # 机器人旋转超过 0.5 弧度(约28度)，才会记录新节点
+    check_min_dist_and_heading_precisely: false       # 是否严格、精确地检查上述距离/角度阈值
+    scan_buffer_size: 30                              # 扫描匹配时，内存中保留的局部历史雷达帧数量
+    scan_buffer_maximum_scan_distance: 10.0           # 局部匹配只考虑距离当前位置 10 米以内的历史节点
+    link_match_minimum_response_fine: 0.1             # 相邻节点匹配的最低得分，低于此值则完全信任原里程计
+    link_scan_maximum_distance: 1.5                   # 允许相邻两个节点建立匹配链接的最大物理距离 (米)
+    loop_search_maximum_distance: 3.0                 # 闭环检测触发的搜索半径 (米)
+    do_loop_closing: true                             # 是否开启闭环检测 (消除累计误差的核心，务必为 true)
+    loop_match_minimum_chain_size: 10                 # 确认闭环前，需要连续匹配上的节点数 (有效防止假闭环)
+    loop_match_maximum_variance_coarse: 3.0           # 粗略匹配允许的最大方差
+    loop_match_minimum_response_coarse: 0.35          # 闭环粗略匹配最低得分阈值 (得分高于此才进入精匹配)
+    loop_match_minimum_response_fine: 0.45            # 闭环精确匹配最低得分阈值 (得分高于此才确认闭环)
+
+    # ==========================================
+    # 相关性搜索参数 (Correlation Parameters) - 匹配搜索范围
+    # ==========================================
+    # 局部匹配 (用于相邻节点)
+    correlation_search_space_dimension: 1.5           # 局部平移搜索的窗口大小 (米)
+    correlation_search_space_resolution: 0.01         # 局部平移搜索的步长 (1cm)
+    correlation_search_space_smear_deviation: 0.1     # 局部平滑/涂抹偏差系数 (处理噪声)
+
+    # 全局闭环搜索 (跨越较长距离)
+    loop_search_space_dimension: 8.0                  # 闭环平移搜索的窗口大小 (8米，应对大面积漂移)
+    loop_search_space_resolution: 0.05                # 闭环平移搜索的步长 (5cm，步长偏大以节省算力)
+    loop_search_space_smear_deviation: 0.03           # 闭环平滑/涂抹偏差系数
+
+    # ==========================================
+    # 扫描匹配器惩罚参数 (Scan Matcher Parameters) - 权重分配
+    # ==========================================
+    distance_variance_penalty: 0.3                    # 距离偏离里程计的惩罚 (越大越死板地信任轮式里程计)
+    angle_variance_penalty: 0.4                       # 角度偏离里程计的惩罚 (越大越死板地信任轮式里程计)
+    fine_search_angle_offset: 0.00349                 # 精确角度搜索范围 (弧度)
+    coarse_search_angle_offset: 0.349                 # 粗略角度搜索范围 (弧度，约 20 度)
+    coarse_angle_resolution: 0.0349                   # 粗略角度搜索步长 (弧度，约 2 度)
+    minimum_angle_penalty: 0.6                        # 基础角度惩罚系数
+    minimum_distance_penalty: 0.3                     # 基础距离惩罚系数
+    use_response_expansion: true                      # 匹配得分不高时，是否允许算法动态扩大搜索范围
+    min_pass_through: 2                               # 激光射线穿过同一个空白网格2次，才将其确认为空闲(Free)
+    occupancy_threshold: 0.4                          # 占用概率阈值 (算法算出大于0.1则在地图上画黑色的障碍物)

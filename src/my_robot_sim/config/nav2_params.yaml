@@ -1,0 +1,388 @@
+# =========================================================================
+# Nav2 全局参数配置 (适配双轮差速+万向轮底盘 - 边建图边导航 SLAM 模式)
+# =========================================================================
+/**:
+  ros__parameters:
+    use_sim_time: true
+# -------------------------------------------------------------------------
+# 1. 行为树导航器 (BT Navigator)
+# -------------------------------------------------------------------------
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_footprint
+    odom_topic: /odom
+    default_bt_xml_filename: "navigate_to_pose_w_replanning_and_recovery.xml"
+
+# -------------------------------------------------------------------------
+# 2. 局部控制器 (Controller Server)
+# -------------------------------------------------------------------------
+controller_server:
+  ros__parameters:
+    controller_frequency: 10.0     # 控制频率 20Hz
+    transform_tolerance: 0.5
+    
+    # 极低速度阈值过滤（防止电机微小震荡）
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5  # 差速车没有 Y 轴移动，阈值设高直接忽略
+    min_theta_velocity_threshold: 0.001
+    
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"] # 这里依然叫 FollowPath，但在下面指定为 MPPI 插件
+    
+    # --- 目标到达检测器 ---
+    general_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.1       # 距离终点 0.1 米内视为到达
+      yaw_goal_tolerance: 0.1      # 角度误差约 5.7 度内视为到达
+      stateful: True
+
+    # --- 导航进度检测器 (防卡死机制) ---
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.2
+      movement_time_allowance: 10.0
+    
+    # =====================================================================
+    # --- MPPI 局部路径规划算法 (超级大脑) ---
+    # =====================================================================
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 20                   # 预测未来步数
+      model_dt: 0.1                   # 每步时间间隔 (56 * 0.05 = 预测未来 2.8 秒)
+      batch_size: 800                 # [算力关键] 每次采样 2000 条轨迹 (如果 CPU 卡顿可降为 1000)
+      
+      # --- 运动学模型配置 ---
+      motion_model: "DiffDrive"        # 明确差速底盘模型
+      vx_std: 0.2                      # 线速度采样的标准差 (探索范围)
+      vy_std: 0.0                      # 差速车没有横向移动
+      wz_std: 0.4                      # 角速度采样的标准差
+      
+      vx_max: 0.4                      # 最高前进速度
+      vx_min: -0.26                    # [关键] 最低倒车速度，允许 MPPI 采样倒车轨迹！
+      vy_max: 0.0
+      vy_min: 0.0
+      wz_max: 1.0                      # 最高旋转速度
+      
+      iteration_count: 1               # 优化的迭代次数
+      prune_distance: 1.7              # 裁剪掉离机器人过远的路径点
+      transform_tolerance: 0.5
+      temperature: 0.3                 # 随机采样的温度参数 (越小越相信最优解，越大越鼓励探索)
+      gamma: 0.015
+      visualize: false                  # [强烈建议] 开启 RViz 里的彩色轨迹簇显示
+      
+      # --- 轨迹可视化参数 ---
+      TrajectoryVisualizer:
+        trajectory_step: 5
+        time_step: 3
+        
+      # ==========================================
+      # 评分法官 (Critics)：决定哪条轨迹最好的裁判团
+      # ==========================================
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic"]
+      
+      ConstraintCritic:                # 防止撞墙的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+        
+      CostCritic:                      # 远离障碍物的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        critical_cost: 300.0
+        consider_footprint: true
+        collision_cost: 1000000.0
+        near_goal_distance: 1.0
+        
+      GoalCritic:                      # 努力靠近终点位置的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 10.0
+        threshold_to_consider: 1.4
+        
+      GoalAngleCritic:                 # 努力对准终点角度的裁判（MPPI 实现自然原地微调的核心）
+        enabled: true
+        cost_power: 1
+        cost_weight: 6.0
+        threshold_to_consider: 0.5     # 距离终点 0.5 米时，才开始严重考核角度
+        
+      PathAlignCritic:                 # 努力贴合全局规划曲线的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 14.0              # 权重极高，强制它走平滑器给出的优美曲线
+        max_heuristic_path_distance: 0.1
+        threshold_to_consider: 0.5
+        offset_from_furthest: 20
+        use_path_orientations: false
+        
+      PathFollowCritic:                # 努力往前跑的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 5
+        threshold_to_consider: 1.4
+        
+      PathAngleCritic:                 # 顺着路径方向走，不要横冲直撞的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 1.0
+        forward_preference: true
+        
+      PreferForwardCritic:             # [倒车核心] 鼓励前进裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0               # 惩罚倒车，但遇到死胡同或需要揉库时允许倒车
+        threshold_to_consider: 0.5
+
+# -------------------------------------------------------------------------
+# 3. 全局规划器 (Planner Server)
+# -------------------------------------------------------------------------
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    planner_plugins: ["GridBased"]
+    
+    GridBased:
+      plugin: "nav2_smac_planner::SmacPlannerHybrid"
+      tolerance: 0.5
+      downsample_costmap: false
+      downsampling_factor: 1
+      allow_unknown: true          # SLAM 边建边导必须开启，允许探索未知区域
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 5.0
+      
+      # ==========================================
+      # [核心优化 1]：启用汽车运动学模型，真正允许倒车！
+      # ==========================================
+      motion_model_for_search: "REEDS_SHEPP" 
+      
+      # ==========================================
+      # [核心优化 2]：性能榨干，解决启动卡 80 秒的问题
+      # ==========================================
+      lookup_table_size: 5.0       # [关键] 将预计算查找表尺寸从 20 米暴降到 5 米，极速启动！
+      angle_quantization_bins: 36  # [关键] 将 360 度划分为 36 份（每 10 度一份），大幅降低计算量
+      
+      # ==========================================
+      # [核心优化 3]：消除“终点画大圈 (Pigtail)”现象
+      # ==========================================
+      analytic_expansion_ratio: 1.5 # 降低解析扩展比例，防止在离终点很远的地方强行画圆弧
+      minimum_turning_radius: 0.2  # 机器人的最小物理转弯半径（米），设小一点防止画大圈
+      
+      # ==========================================
+      # [行为惩罚权重]：决定行驶轨迹的“性格”
+      # ==========================================
+      reverse_penalty: 1.5         # 倒车惩罚：能往前开就往前开，空间不够时才倒车（切忌设为 0.0）
+      change_penalty: 0.1          # 换挡惩罚：防止在原地鬼畜地频繁“前进-后退”
+      non_straight_penalty: 1.2    # 走曲线的惩罚：适当允许走优美的弧线
+      cost_penalty: 2.0            # 靠近障碍物的惩罚：值越大，越倾向于走马路正中间
+# -------------------------------------------------------------------------
+# 4. 局部代价地图 (Local Costmap)
+# -------------------------------------------------------------------------
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      transform_tolerance: 0.5
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.05
+      footprint: "[[0.26, 0.22], [0.26, -0.22], [-0.165, -0.22], [-0.165, 0.22]]"  # <-- 加上这行真实轮廓
+      plugins: ["voxel_layer", "inflation_layer"]
+      
+      voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
+        enabled: True
+        publish_voxel_map: True
+        origin_z: 0.0
+        z_resolution: 0.05
+        z_voxels: 16
+        max_obstacle_height: 2.0
+        mark_threshold: 0
+        observation_sources: scan
+        scan:
+          topic: /scan_filtered    # 已切换为过滤后的雷达话题
+          min_obstacle_height: 0.0
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.5      # 已修改为 0.5
+
+# -------------------------------------------------------------------------
+# 5. 全局代价地图 (Global Costmap)
+# -------------------------------------------------------------------------
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      transform_tolerance: 0.5
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      footprint: "[[0.26, 0.22], [0.26, -0.22], [-0.165, -0.22], [-0.165, 0.22]]"  # <-- 加上这行真实轮廓
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+        subscribe_to_updates: True
+        
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan_filtered    # 已切换为过滤后的雷达话题
+          min_obstacle_height: 0.15
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.4      # 已修改为 0.4
+
+# -------------------------------------------------------------------------
+# 6. 碰撞监视器 (Collision Monitor)
+# -------------------------------------------------------------------------
+collision_monitor:
+  ros__parameters:
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    
+    cmd_vel_in_topic: "cmd_vel_smoothed" 
+    cmd_vel_out_topic: "cmd_vel"
+    
+    transform_tolerance: 0.5
+    source_timeout: 1.0
+    
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan_filtered"      # 已切换为过滤后的雷达话题
+      
+    polygons: ["stop_box"]
+    stop_box:
+      type: "polygon"
+      points: "[[0.27, 0.22], [0.27, -0.22], [-0.215, -0.27], [-0.215, 0.27]]"
+      action_type: "approach"
+      time_before_collision: 1.5   # 增加时间预判碰撞维度
+      visualize: True
+      polygon_pub_topic: "polygon_stop"
+      polygon_sub_topic: "polygon_sub"
+
+# =========================================================================
+# 7. 行为服务器 (Behavior Server)
+# =========================================================================
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors::Spin"
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+
+# =========================================================================
+# 8. 路径平滑服务器 (Smoother Server)
+# =========================================================================
+smoother_server:
+  ros__parameters:
+    smoother_plugins: ["ConstrainedSmoother"]
+    
+    ConstrainedSmoother:
+      plugin: "nav2_constrained_smoother/ConstrainedSmoother"
+      
+      # --- 1. 倒车兼容性 ---
+      # [极其关键] 必须明确允许平滑倒车路径！否则倒车路径经过这里会被揉成一团乱码。
+      reversing_enabled: true      
+      
+      # --- 2. 运动学约束同步 ---
+      # [极其关键] 这里的转弯半径必须与 planner_server 里的 minimum_turning_radius 保持绝对一致！
+      minimum_turning_radius: 0.2  
+      
+      # --- 3. 性能与采样优化 ---
+      # 将原路径点稀释，不仅能大幅节省 CPU 算力，还能让短距离内的锯齿直接消失，曲线更长更平滑。
+      path_downsampling_factor: 3  
+      path_upsampling_factor: 1    # 平滑完之后不需要再插值加密，RPP 控制器自己会处理
+      
+      # --- 4. 优化器权重调节 (决定平滑的形态) ---
+      w_curve: 30.0                # 曲线平滑权重：值越大，路径越倾向于变成一根没有任何锐角的完美曲线
+      w_dist: 0.0                  # 偏离原路径的惩罚：设为 0.0，允许它稍微偏离规划器给出的原始粗糙路径，以此换取更顺滑的过弯弧线
+      w_obstacle: 30.0             # 避障权重：在走曲线的同时，像磁铁同极相斥一样，强制把路径推离障碍物
+      
+      # --- 5. 求解器参数 ---
+      max_iterations: 70           # 数学求解器的最大迭代次数（70次足够平滑了，设太高会增加延迟）
+      debug_optimizer: false
+
+# =========================================================================
+# 9. 速度平滑器 (Velocity Smoother)
+# =========================================================================
+velocity_smoother:
+  ros__parameters:
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.26, 0.0, 1.0]
+    min_velocity: [-0.26, 0.0, -1.0]
+    max_accel: [2.5, 0.0, 3.2]
+    max_decel: [-2.5, 0.0, -3.2]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+# =========================================================================
+# 10. 航点跟随器 (Waypoint Follower)
+# =========================================================================
+waypoint_follower:
+  ros__parameters:
+    loop_rate: 200
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      waypoint_pause_duration: 200
+
+# =========================================================================
+# 11. 自动回充服务器 (Docking Server)
+# =========================================================================
+docking_server:
+  ros__parameters:
+    controller_frequency: 50.0
+    initial_perception_timeout: 5.0
+    wait_charge_timeout: 5.0
+    dock_approach_timeout: 30.0
+    undock_linear_tolerance: 0.05
+    undock_angular_tolerance: 0.1
+    max_retries: 3
+    base_frame: "base_footprint"
+    odom_frame: "odom"
+    dock_plugins: ["simple_dock"]
+    simple_dock:
+      plugin: "opennav_docking::SimpleChargingDock"
+      docking_threshold: 0.05
+      staging_x_offset: -0.5
+      use_external_detection_pose: true
