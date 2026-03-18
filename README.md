@@ -80,7 +80,7 @@ ros2 launch my_robot_sim leo_sim_nav.launch.py
 2. **TF 树**：存在 `map` -> `base_footprint` 的变换。
 3. **启动被测节点**：
 ```bash
-ros2 launch robot_control_system nav2_explore.launch
+ros2 launch robot_control_system nav2_explore.launch.py
    
 ```
 ## 模拟状态机切换：开启 / 停止探索

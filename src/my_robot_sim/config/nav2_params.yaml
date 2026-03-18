@@ -255,8 +255,8 @@ global_costmap:
           
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 5.0   # [修改] 从 3.0 提高到 5.0
-        inflation_radius: 0.5      # 已修改为 0.5
+        cost_scaling_factor: 15.0   # [修改] 从 3.0 提高到 5.0
+        inflation_radius: 0.8      # 已修改为 0.5
 
 # -------------------------------------------------------------------------
 # 6. 碰撞监视器 (Collision Monitor)
