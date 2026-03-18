@@ -280,7 +280,7 @@ collision_monitor:
     polygons: ["stop_box"]
     stop_box:
       type: "polygon"
-      points: "[[0.27, 0.22], [0.27, -0.22], [-0.215, -0.27], [-0.215, 0.27]]"
+      points: "[[0.215, 0.22], [0.215, -0.22], [-0.21, -0.22], [-0.21, 0.22]]"
       action_type: "approach"
       time_before_collision: 1.5   # 增加时间预判碰撞维度
       visualize: True

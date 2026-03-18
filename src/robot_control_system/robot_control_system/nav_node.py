@@ -33,7 +33,7 @@ class NavControllerNode(Node):
         
         self.explore_bounds = [-1.5, 1.5]
         # 仅用于物体/箱子 GOTO：车停在目标沿朝向后退 432mm 处，其它导航发到哪开到哪
-        self.standoff_dist = 0.432
+        self.standoff_dist = 0.37
         
         self.nav_mode = "IDLE"  # "IDLE", "EXPLORE", "GOTO"
         self.goal_handle = None
