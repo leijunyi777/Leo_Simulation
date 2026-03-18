@@ -64,59 +64,6 @@ ros2 launch my_robot_sim leo_sim_nav.launch.py
 
 ```
 
-*💡 注：Launch 文件内嵌了自动唤醒机制（启动 10 秒后注入 1mm/s 的微小速度），完美解决了 Gazebo 差速插件静止时不发布 Odom 导致的地图死锁问题。*
-
-### 3. 启动导航执行引擎 (微服务)
-
-在新终端中运行你编写的非阻塞 Action Client 节点：
-
-```bash
-source install/setup.bash
-ros2 run robot_control_system nav_controller_node
-
-```
-
-## 🎮 导航微服务 API 接口说明
-
-`nav_controller_node` 是一个独立的空间执行引擎，完全通过 ROS 2 Topic 接收外部状态机（大脑）的指令并反馈进度。你可以通过以下命令在终端进行接口联调：
-
-* **1. 启动随机探索 (EXPLORING)**
-```bash
-ros2 topic pub -1 /status/moving std_msgs/msg/Bool "{data: true}"
-
-```
-
-
-* **2. 发现目标物体，下发抓取坐标 (APPROACHING_OBJ)**
-```bash
-ros2 topic pub -1 /target_object_pose geometry_msgs/msg/PoseStamped "{header: {frame_id: 'map'}, pose: {position: {x: 1.5, y: 0.5, z: 0.0}, orientation: {w: 1.0}}}"
-
-```
-
-
-* **3. 抓取完成，前往放置盒 (APPROACHING_BOX)**
-```bash
-ros2 topic pub -1 /status/going_to_box std_msgs/msg/Bool "{data: true}"
-ros2 topic pub -1 /target_box_pose geometry_msgs/msg/PoseStamped "{header: {frame_id: 'map'}, pose: {position: {x: -1.0, y: -2.0, z: 0.0}, orientation: {w: 1.0}}}"
-
-```
-
-
-* **4. 紧急制动 / 中止任务 (HALT)**
-```bash
-ros2 topic pub -1 /status/moving std_msgs/msg/Bool "{data: false}"
-
-```
-
-
-* **5. 监听到达反馈 (Feedback)**
-```bash
-ros2 topic echo /move_feedback
-
-```
-
-
-
 ## 🌟 核心特性与优化总结
 
 本项目针对四轮滑移转向（Skid-Steering）机器人和 Gazebo 仿真环境进行了深度排雷与定制优化：
@@ -126,6 +73,89 @@ ros2 topic echo /move_feedback
 3. **消除雷达贴墙盲区**：将 GPU Lidar 的 `min_range` 从默认的 0.35m 下调至 0.10m，防止近距离贴墙时代价地图被意外擦除导致的车体撞击。
 4. **统一 Base Frame 高度**：强制将 SLAM 与 Nav2 的参考坐标系设为 `base_footprint` (Z=0)，并设定生成高度为 `Z=0.02`，完美解决 RViz 中地图生成在车顶的“高空抛物”问题。
 
-```
+## 调试前提准备
 
+在开始单独测试 `nav_node` 之前，请确保以下基础组件已经运行：
+1. **Nav2 与 地图服务器**：保证 `/map` 话题有数据，且 Nav2 的 Action Server (`Maps_to_pose`) 已就绪。
+2. **TF 树**：存在 `map` -> `base_footprint` 的变换。
+3. **启动被测节点**：
+```bash
+ros2 launch robot_control_system nav2_explore.launch
+   
 ```
+## 模拟状态机切换：开启 / 停止探索
+FSM 的 SEARCH 状态通过 /nav/cmd_explore 话题控制底层探索的启停。
+
+* **开启探索 (模拟进入 SEARCH 状态)**
+发送 True，节点将重置周期状态为 OBJECT，并向 m-explore 发送允许探索指令（或在 m-explore 不活跃时自动下发随机坐标点）。
+
+```bash
+ros2 topic pub -1 /nav/cmd_explore std_msgs/msg/Bool "{data: true}"
+   
+```
+预期现象：终端打印“cmd_explore: True”，底盘开始随机游走或交由 m-explore 控制。
+
+* **停止探索 / 紧急刹车**
+发送 False，节点将立即取消当前的导航目标，底盘急刹车，并持续压制 m-explore。
+```bash
+ros2 topic pub -1 /nav/cmd_explore std_msgs/msg/Bool "{data: false}"
+   
+```
+## 模拟抓取导航 (GOTO_OBJECT 阶段)
+假设视觉系统发现了目标，FSM 会先停止探索，然后下发物体坐标。由于上一步开启探索时节点已将阶段重置为 OBJECT，此次发点将触发物体避让导航逻辑。
+
+* **下发物体坐标 (模拟 MOVE_TO_OBJECT 状态)**
+假设物体在地图坐标 (x: 2.0, y: 1.0)：
+
+```bash
+ros2 topic pub -1 /nav/goal_point geometry_msgs/msg/PointStamped "{header: {frame_id: 'map'}, point: {x: 2.0, y: 1.0, z: 0.0}}"
+   
+```
+预期现象：
+
+终端打印“【前往抓取】：计算距离目标 370mm 处的停靠点”。
+
+机器人不会开到 (2.0, 1.0)，而是开到距离该点 370mm 的位置，并且车头正对该点。
+
+到达后，监听终端会收到 /nav/goal_reached: True。
+
+内部状态变化：节点自动将追踪器翻转为 BOX 阶段。
+
+* **模拟机械臂反馈循环 (GRASP / DROP 阶段)**
+在执行完 GOTO 任务后，nav_node 会自动锁定探索功能，等待机械臂完成动作。我们需要模拟机械臂的“抓取”和“复位”反馈。
+
+模拟机械臂动作完成
+向 /manipulator_feedback 连续发送 2 次 True（代表机械臂完成了一组动作）。
+```bash
+ros2 topic pub -1 /manipulator_feedback std_msgs/msg/Bool "{data: true}"
+   
+```
+连发两次后预期现象：
+终端打印“机械臂一轮完成 -> 恢复 m-explore.”（前提是 /nav/cmd_explore 依然为 True，否则会等它变为 True 才恢复）。
+
+##  模拟放置导航 (GOTO_BOX 分段阶段)
+由于刚才的抓取导航已经让内部状态变为了 BOX 阶段，此时再发送坐标，将触发分段放置逻辑（先回原点，再去箱子前方 370mm 处）。
+
+* **下发箱子坐标 (模拟 MOVE_TO_BOX 状态)**
+假设箱子在地图坐标 (x: -1.0, y: 3.0)：
+```bash
+ros2 topic pub -1 /nav/goal_point geometry_msgs/msg/PointStamped "{header: {frame_id: 'map'}, point: {x: -1.0, y: 3.0, z: 0.0}}"
+   
+```
+预期现象：
+
+第一阶段：终端打印“【前往放置-阶段1】：先返回(0,0)...”。机器人无视传入的坐标，直接向坐标原点 (0.0, 0.0) 行驶，到达后朝向与初始方向相反。
+
+第二阶段：到达原点后，终端打印“【前往放置-阶段2】：已到达(0,0)，现在前往箱子前 370mm 的避让点”。机器人重新规划路线，前往箱子 (-1.0, 3.0) 前方 370mm 处，车头正对箱子。
+
+完成：到达最终避让点后，监听终端再次收到 /nav/goal_reached: True。内部状态重置。
+
+## 调试进阶：监听内部状态交互
+如果你想确保 nav_node 完美地压制或唤醒了 m-explore，可以新开一个终端监听恢复话题：
+```bash
+ros2 topic echo /explore/resume
+   
+```
+当你在步骤 2 (下发坐标) 时，你应该能看到此话题迅速发布了一次 False（打断探索）。
+
+当你在步骤 3 (模拟两次机械臂反馈) 后，如果宏观探索开关是开着的，你应该能看到此话题发布了 True（恢复探索）。
