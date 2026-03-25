@@ -17,7 +17,7 @@ slam_toolbox:
     odom_frame: odom                                  # 里程计坐标系名称 (必须与你的TF树匹配)
     map_frame: map                                    # 地图全局坐标系名称
     base_frame: base_footprint                             # 机器人基座坐标系名称 (有些车叫 base_link)
-    scan_topic: /scan                                 # 订阅的二维激光雷达话题
+    scan_topic: /scan_filtered                                 # 四轮过滤后的雷达（与 launch 中 four_wheel_filter 的 remapping 一致）
     use_map_saver: true                               # 是否允许通过 ROS 2 service 请求保存地图
     mode: mapping                                     # 运行模式：mapping(建图) 或 localization(定位)
 
@@ -30,7 +30,7 @@ slam_toolbox:
     min_laser_range: 0.0                              # 构建地图时，丢弃小于此距离的雷达点 (米)
     max_laser_range: 20.0                             # 构建地图时，丢弃大于此距离的雷达点 (米)
     minimum_time_interval: 0.1                        # 往位姿图中插入新节点的最小时间间隔 (秒)
-    transform_timeout: 0.2                            # 等待 TF 树变换的超时时间 (秒)
+    transform_timeout: 1.0                            # 等待 TF 树变换的超时时间 (秒)
     tf_buffer_duration: 30.0                           # TF 缓存保留的时间长度 (秒)
     stack_size_to_use: 40000000                       # 序列化地图时分配的线程栈大小 (约 40MB，防溢出)
     enable_interactive_mode: true                     # 是否在 RViz 中开启交互模式（允许手动拖拽修正节点）
@@ -70,8 +70,8 @@ slam_toolbox:
     # ==========================================
     # 扫描匹配器惩罚参数 (Scan Matcher Parameters) - 权重分配
     # ==========================================
-    distance_variance_penalty: 0.1                    # 距离偏离里程计的惩罚 (越大越死板地信任轮式里程计)
-    angle_variance_penalty: 0.2                       # 角度偏离里程计的惩罚 (越大越死板地信任轮式里程计)
+    distance_variance_penalty: 0.3                    # 距离偏离里程计的惩罚 (越大越死板地信任轮式里程计)
+    angle_variance_penalty: 0.4                       # 角度偏离里程计的惩罚 (越大越死板地信任轮式里程计)
     fine_search_angle_offset: 0.00349                 # 精确角度搜索范围 (弧度)
     coarse_search_angle_offset: 0.349                 # 粗略角度搜索范围 (弧度，约 20 度)
     coarse_angle_resolution: 0.0349                   # 粗略角度搜索步长 (弧度，约 2 度)

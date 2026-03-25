@@ -301,7 +301,7 @@
     <joint name="${joint_prefix}laser_joint" type="fixed">
       <parent link="${link_prefix}base_link"/>
       <child link="${link_prefix}laser"/>
-      <origin xyz="0.035 0.0 -0.137" rpy="0.0 0.0 0.0"/>
+      <origin xyz="0.02313 0.0 -0.138" rpy="0.0 0.0 3.14"/>
     </joint>
 
   </xacro:macro>

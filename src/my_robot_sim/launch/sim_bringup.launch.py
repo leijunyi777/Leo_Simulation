@@ -2,21 +2,23 @@ import os
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import Command
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
-    pkg_dir = get_package_share_directory('my_robot_sim')
+    pkg_dir = get_package_share_directory('my_robot_sim') #我的机器人包路径
+    leo_pkg_dir = get_package_share_directory('leo_description') #Leo小车包路径
 
-    urdf_file = os.path.join(pkg_dir, 'urdf', 'my_robot.urdf')
+    # 使用 leo_description 官方 leo_sim.urdf.xacro（内部包含 macros.xacro 中的车模型）
+    urdf_file = os.path.join(leo_pkg_dir, 'urdf', 'leo_sim.urdf.xacro')
     world_file = os.path.join(pkg_dir, 'worlds', 'simple.sdf')
     bridge_config = os.path.join(pkg_dir, 'config', 'bridge.yaml')
-    # === 新增：获取我们的 SLAM 配置文件路径 ===
     slam_params_file = os.path.join(pkg_dir, 'config', 'mapper_params_online_async.yaml')
     nav2_params_file = os.path.join(pkg_dir, 'config', 'nav2_params.yaml')
 
-    with open(urdf_file, 'r') as infp:
-        robot_desc = infp.read()
+    # 使用 xacro 解析 xacro 得到 robot_description
+    robot_desc = Command(['xacro ', urdf_file]) #使用xacro解析xacro得到robot_description,urdf_file是leo_sim.urdf.xacro文件路径
 
     # 1. 启动 Gazebo
     gz_sim = IncludeLaunchDescription(
@@ -33,18 +35,20 @@ def generate_launch_description():
         parameters=[{'robot_description': robot_desc, 'use_sim_time': True}]
     )
 
-    # 3. 启动 Joint State Publisher
+    # 3. 启动 Joint State Publisher（唯一节点名，避免与 leo_sim_nav 同时运行时重名）
     joint_state_publisher = Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
+        name='joint_state_publisher_bringup',
         parameters=[{'use_sim_time': True}]
     )
 
-    # 4. Spawn 机器人
+    # 4. Spawn 机器人（从 /robot_description 话题加载 Leo 官方模型）
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
-        arguments=['-string', robot_desc, '-name', 'my_robot', '-z', '0.2'],
+        arguments=['-topic', 'robot_description', '-name', 'leo', '-z', '0.2'],
+        #-topic, 'robot_description', -name, 'leo', -z, '0.2' 从/robot_description话题加载Leo官方模型，名字为leo，高度为0.2米
     )
 
     # 5. ROS-GZ 桥接
@@ -54,12 +58,8 @@ def generate_launch_description():
         parameters=[{'config_file': bridge_config, 'use_sim_time': True}],
     )
 
-    # 6. TF 静态桥接翻译官
-    static_tf_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        arguments=['0', '0', '0', '0', '0', '0', 'laser', 'my_robot/base_link/laser_sensor']
-    )
+    # 6. Leo 官方 URDF 中 laser 帧已与 Gazebo 的 gz_frame_id 一致，无需额外 static TF
+
 
     # ================= 7. 启动 Nav2 (纯导航模式) =================
     # 注意这里使用的是 navigation_launch.py，它不包含 amcl 和 map_server
@@ -106,7 +106,7 @@ def generate_launch_description():
         joint_state_publisher,
         spawn_robot,
         bridge,
-        static_tf_node,
+       
         teleop_node,
         rviz2_node,
         slam_toolbox_node, # <--- 别忘了加入返回列表！

@@ -4,7 +4,10 @@ from launch.actions import IncludeLaunchDescription, TimerAction, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
-from launch.substitutions import Command # <--- 新增：用于解析 xacro 文件
+#用于解析 xacro 文件
+from launch.substitutions import Command 
+# 导入 Nav2 的 YAML 动态重写工具
+from nav2_common.launch import RewrittenYaml
 
 def generate_launch_description():
     # 获取两个不同包的路径
@@ -12,17 +15,17 @@ def generate_launch_description():
     leo_pkg_dir = get_package_share_directory('leo_description') # 获取 Leo 小车的包路径
 
     # 配置文件与模型路径
-    # 修改点 1：指向 leo_description 包中的 xacro 文件
+    #os.path.join: 将多个路径组合成一个路径，用于获取文件路径
     urdf_file = os.path.join(leo_pkg_dir, 'urdf', 'leo_sim.urdf.xacro') 
-    # 修改点 2：指向我们刚刚创建的新房间
-    world_file = os.path.join(sim_pkg_dir, 'worlds', 'simple_room.sdf')  
-    
+    world_file = os.path.join(sim_pkg_dir, 'worlds', 'testing_world.sdf')   
     bridge_config = os.path.join(sim_pkg_dir, 'config', 'bridge.yaml')
     slam_params_file = os.path.join(sim_pkg_dir, 'config', 'mapper_params_online_async.yaml')
-    nav2_params_file = os.path.join(sim_pkg_dir, 'config', 'nav2_params.yaml')
+    explore_params_file = os.path.join(sim_pkg_dir, 'config', 'explore_params.yaml') # 自动探索参数文件路径
     rviz_config_file = os.path.join(sim_pkg_dir, 'rviz', 'sim.rviz')
-
-    # ================= 修改点 3：使用 Command 动态解析 xacro =================
+    # 获取参数文件和行为树文件的绝对路径
+    nav2_params_file = os.path.join(sim_pkg_dir, 'config', 'nav2_params.yaml') # Nav2 参数文件路径
+    custom_bt_path = os.path.join(sim_pkg_dir, 'config', 'navigate_to_pose_w_replanning_and_recovery.xml')
+    # ================= 使用 Command 动态解析 xacro =================
     # 以前是直接 read() 文本，现在需要调用系统命令 'xacro' 转换它
     robot_desc = Command(['xacro ', urdf_file])
 
@@ -41,19 +44,20 @@ def generate_launch_description():
         parameters=[{'robot_description': robot_desc, 'use_sim_time': True}]
     )
 
-    # 3. 启动 Joint State Publisher
+    # 3. 启动 Joint State Publisher（唯一节点名，避免与 sim_bringup 同时运行时重名）
     joint_state_publisher = Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
+        name='joint_state_publisher_nav',
         parameters=[{'use_sim_time': True}]
     )
 
     # 4. Spawn 机器人
-    # 修改点 4：将 -string 替换为 -topic，让 Gazebo 监听 RSP 发布解析好的 urdf
+    # 将 -string 替换为 -topic，让 Gazebo 监听 RSP 发布解析好的 urdf
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
-        arguments=['-world', 'simple_room','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.02'],
+        arguments=['-world', 'testing_world','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.02'],
         output='screen'
     )
 
@@ -77,7 +81,7 @@ def generate_launch_description():
 
     # 延迟 8 秒执行（等小车出生并在 Gazebo 里加载稳妥后，再发指令）
     delayed_kickstart = TimerAction(
-        period=12.0, 
+        period=15.0, 
         actions=[kickstart_odom]
     )
 
@@ -88,24 +92,49 @@ def generate_launch_description():
         parameters=[{'config_file': bridge_config, 'use_sim_time': True}],
     )
 
-    # 6. TF 静态桥接翻译官 (根据 Ignition Gazebo 的默认习惯调整)
-    static_tf_node = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        # 将 Gazebo Lidar 内部生成的帧链接到 URDF 中的 laser 帧
-        arguments=['0', '0', '0', '0', '0', '0', 'laser', 'leo_sim/base_link/laser_sensor']
+    # 6 四方向车轮过滤：remapping 订阅 /scan、发布 /scan_filtered；
+    #     /scan_filtered 被 nav2_params.yaml 与 mapper_params_online_async.yaml（SLAM）使用。
+    #     注意：与 sim_bringup 二选一运行，避免重复启动同名节点。
+    laser_filter_node = Node(
+        package='robot_control_system',
+        executable='four_wheel_filter',
+        name='four_wheel_filter_nav',
+        parameters=[
+            {'use_sim_time': True},
+            {'min_range': 0.2},
+            {'max_range': 12.0},
+        ],
+        remappings=[
+            ('scan', '/scan'),              # 原始雷达（bridge 发布）
+            ('scan_filtered', '/scan_filtered'),
+        ],
     )
 
-    # 7. 启动 Nav2 (纯导航模式)
+    # === 核心魔法：定义要篡改的参数字典 ===
+    param_substitutions = {
+        'default_nav_to_pose_bt_xml': custom_bt_path
+    }
+
+    # === 生成动态 YAML 文件对象 ===
+    configured_params = RewrittenYaml(
+        source_file=nav2_params_file,
+        root_key='', # 如果你的小车没有设置 namespace，这里留空即可
+        param_rewrites=param_substitutions,
+        convert_types=True
+    )
+
+
+    # 7. 启动 Nav2 (纯导航模式)，延迟 10 秒让 SLAM 先发布 map 再起 Nav2
     nav2_bringup_node = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'navigation_launch.py')
         ),
         launch_arguments={
             'use_sim_time': 'true',
-            'params_file': nav2_params_file
+            'params_file': configured_params,
         }.items()
     )
+    delayed_nav2 = TimerAction(period=12.0, actions=[nav2_bringup_node])
 
     # 8. 键盘控制
     teleop_node = Node(
@@ -137,16 +166,17 @@ def generate_launch_description():
         }.items()
     )
 
+ 
     return LaunchDescription([
         gz_sim,
         robot_state_publisher,
         joint_state_publisher,
         bridge,
+        laser_filter_node,
         delayed_spawn,
         delayed_kickstart,
-        #static_tf_node,
         #teleop_node,
         rviz2_node,
         slam_toolbox_node,
-        nav2_bringup_node
+        delayed_nav2,
     ])

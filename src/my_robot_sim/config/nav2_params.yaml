@@ -1,221 +1,297 @@
 # =========================================================================
 # Nav2 全局参数配置 (适配双轮差速+万向轮底盘 - 边建图边导航 SLAM 模式)
 # =========================================================================
-
+/**:
+  ros__parameters:
+    use_sim_time: true
 # -------------------------------------------------------------------------
 # 1. 行为树导航器 (BT Navigator)
-# 负责协调规划器、控制器和恢复动作的顶层逻辑
 # -------------------------------------------------------------------------
 bt_navigator:
   ros__parameters:
-    use_sim_time: True             # [必填] 是否使用 Gazebo 发布的虚拟时间
-    global_frame: map              # 整个导航系统的最高层全局静态坐标系
-    robot_base_frame: base_footprint    # 机器人本体中心所在的坐标系
-    odom_topic: /odom              # 订阅系统里程计的话题名称
-    # 默认加载的行为树 XML 文件。这个默认文件包含了完整的重规划、避障和卡死恢复逻辑
-    default_bt_xml_filename: "navigate_to_pose_w_replanning_and_recovery.xml"
+    global_frame: map
+    robot_base_frame: base_footprint
+    odom_topic: /odom
+    default_nav_to_pose_bt_xml:  ""
 
 # -------------------------------------------------------------------------
 # 2. 局部控制器 (Controller Server)
-# 负责接收全局路径，进行局部避障，并输出具体的 cmd_vel 速度指令
 # -------------------------------------------------------------------------
 controller_server:
   ros__parameters:
-    use_sim_time: True
-    controller_frequency: 20.0     # 控制循环的计算频率，20Hz 意味着每秒下发 20 次速度指令
-    transform_tolerance: 0.5       # 允许 0.5 秒的坐标延迟，防止 140Hz 崩溃
+    controller_frequency: 10.0     # 控制频率 20Hz
+    transform_tolerance: 1.0
     
-    # 低于以下阈值的速度指令将被强制设为 0，防止电机接收微小噪音而在原地颤抖
+    # 极低速度阈值过滤（防止电机微小震荡）
     min_x_velocity_threshold: 0.001
-    min_y_velocity_threshold: 0.5  # 差速车没有 Y 轴移动能力，阈值设高直接忽略横向噪音
+    min_y_velocity_threshold: 0.5  # 差速车没有 Y 轴移动，阈值设高直接忽略
     min_theta_velocity_threshold: 0.001
     
-    # 声明要加载的插件名，供下方具体配置使用
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
-    controller_plugins: ["FollowPath"]
+    controller_plugins: ["FollowPath"] # 这里依然叫 FollowPath，但在下面指定为 MPPI 插件
     
     # --- 目标到达检测器 ---
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25      # 允许的位置误差：距离终点 0.25 米内即视为到达
-      yaw_goal_tolerance: 0.25     # 允许的角度误差：偏航角误差在 0.25 弧度（约 14 度）内即视为到达
-      stateful: True               # 是否保持内部状态（如记录是否曾经满足过到达条件）
+      xy_goal_tolerance: 0.05      # 距离终点 0.1 米内视为到达
+      yaw_goal_tolerance: 0.15      # 角度误差约 11.4 度内视为到达
+      stateful: True
 
     # --- 导航进度检测器 (防卡死机制) ---
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5 # 要求机器人必须移动的最小半径（米）
-      movement_time_allowance: 10.0 # 时间宽限（秒）：如果 10 秒内都没走出 0.5 米，系统将判定机器人卡死并触发恢复动作
+      required_movement_radius: 0.05
+      movement_time_allowance: 3.0  # [修改] 从 10.0 增加到 15.0，延长防卡死时间
     
-    # --- RPP 局部路径规划算法 (具体的速度下发大脑) ---
+    # =====================================================================
+    # --- MPPI 局部路径规划算法 (超级大脑) ---
+    # =====================================================================
     FollowPath:
-      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 1.0           # 期望直线速度
-      lookahead_dist: 0.6                # 往前看 0.6 米处的路径点来跟随
-      min_lookahead_dist: 0.3
-      max_lookahead_dist: 0.9
-      lookahead_time: 1.5
-      transform_tolerance: 0.5
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 60                   # 预测未来步数
+      model_dt: 0.1                   # 每步时间间隔 (56 * 0.05 = 预测未来 2.8 秒)
+      batch_size: 1200                 # [算力关键] 每次采样 2000 条轨迹 (如果 CPU 卡顿可降为 1000)
       
-      # --- 核心杀手锏：允许原地转弯！ ---
-      use_rotate_to_heading: false        # 允许原地转弯对准路径！
-      rotate_to_heading_min_angle: 0.5   # 当路径偏离超过 0.5 弧度（约30度）时，先停下原地转，再走！
-      rotate_to_heading_angular_vel: 1.0 # 原地转弯的速度
+      # --- 运动学模型配置 ---
+      motion_model: "DiffDrive"        # 明确差速底盘模型
+      vx_std: 0.15                      # 线速度采样的标准差 (探索范围)
+      vy_std: 0.0                      # 差速车没有横向移动
+      wz_std: 0.15                      # 角速度采样的标准差
       
-      # --- 接近终点时的减速 ---
-      use_velocity_scaled_lookahead_dist: false
-      min_approach_linear_velocity: 0.05
-      approach_velocity_scaling_dist: 0.6
+      vx_max: 0.15                      # 最高前进速度
+      vx_min: -0.15                    # [关键] 最低倒车速度，允许 MPPI 采样倒车轨迹！
+      vy_max: 0.0
+      vy_min: 0.0
+      wz_max: 0.3                      # 最高旋转速度
       
-      # --- 运动学极限 ---
-      max_linear_accel: 1.0              # 柔和的直线起步加速度
-      max_angular_accel: 2.0             # 柔和的旋转加速度
+      iteration_count: 1               # 优化的迭代次数
+      prune_distance: 1.7              # 裁剪掉离机器人过远的路径点
+      transform_tolerance: 1.0
+      temperature: 0.1                 # 随机采样的温度参数 (越小越相信最优解，越大越鼓励探索)
+      gamma: 0.015
+      visualize: false                  # [强烈建议] 开启 RViz 里的彩色轨迹簇显示
       
-      max_robot_pose_search_dist: 10.0
-      use_interpolation: true
+      # --- 轨迹可视化参数 ---
+      TrajectoryVisualizer:
+        trajectory_step: 5
+        time_step: 3
+        
+      # ==========================================
+      # 评分法官 (Critics)：决定哪条轨迹最好的裁判团
+      # ==========================================
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic"]
+      
+      ConstraintCritic:                # 防止撞墙的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        
+      CostCritic:                      # 远离障碍物的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 0.2
+        critical_cost: 254.0
+        consider_footprint: true
+        collision_cost: 1000000.0
+        near_goal_distance: 1.0          # [修改] 从 1.0 增加到 1.5。距离终点 1.5 米内时，逐渐无视墙壁带来的惩罚
+        
+      GoalCritic:                      # 努力靠近终点位置的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 35.0     # [修改] 从 10.0 增加到 20.0，增强向终点走的意愿
+        threshold_to_consider: 1.4
+        
+      GoalAngleCritic:                 # 努力对准终点角度的裁判（MPPI 实现自然原地微调的核心）
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0              # [修改] 从 6.0 大幅提高到 15.0。强迫 MPPI 到了终点后认真对待角度对齐这件事
+        threshold_to_consider: 0.1     # 距离终点 0.5 米时，才开始严重考核角度
+        
+      PathAlignCritic:                 # 努力贴合全局规划曲线的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 25.0              # 权重极高，强制它走平滑器给出的优美曲线
+        max_heuristic_path_distance: 0.1
+        threshold_to_consider: 0.1
+        offset_from_furthest: 20
+        use_path_orientations: false
+        
+      PathFollowCritic:                # 努力往前跑的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 5
+        threshold_to_consider: 1.4
+        
+      PathAngleCritic:                 # 顺着路径方向走，不要横冲直撞的裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 1.0
+        forward_preference: true
+        
+      PreferForwardCritic:             # [倒车核心] 鼓励前进裁判
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0               # 惩罚倒车，但遇到死胡同或需要揉库时允许倒车
+        threshold_to_consider: 0.5
 
 # -------------------------------------------------------------------------
 # 3. 全局规划器 (Planner Server)
-# 负责在宏观地图上（像高德地图一样）计算从 A 点到 B 点的最优连通路径
 # -------------------------------------------------------------------------
 planner_server:
   ros__parameters:
-    use_sim_time: True
+    expected_planner_frequency: 20.0
     planner_plugins: ["GridBased"]
     
     GridBased:
-      plugin: "nav2_navfn_planner::NavfnPlanner"
-      tolerance: 0.5               # 容差（米）：如果终点在障碍物里，允许它在终点外 0.5 米找一个最近的空地作为替代终点
-      use_astar: true              # True 使用 A* 算法（侧重效率）；False 使用 Dijkstra 算法（侧重遍历覆盖）
-
+      plugin: "nav2_smac_planner::SmacPlannerHybrid"
+      tolerance: 0.15    # [修改] 从 0.5 降到 0.15。限制它的偏移范围，如果终点在墙上，最多只能偏 15 厘米，不要满世界乱飘
+      downsample_costmap: false
+      downsampling_factor: 1
+      allow_unknown: true          # SLAM 边建边导必须开启，允许探索未知区域
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 5.0
+      
+      # ==========================================
+      # [核心优化 1]：启用汽车运动学模型，真正允许倒车！
+      # ==========================================
+      motion_model_for_search: "REEDS_SHEPP" 
+      
+      # ==========================================
+      # [核心优化 2]：性能榨干，解决启动卡 80 秒的问题
+      # ==========================================
+      lookup_table_size: 5.0       # [关键] 将预计算查找表尺寸从 20 米暴降到 5 米，极速启动！
+      angle_quantization_bins: 36  # [关键] 将 360 度划分为 36 份（每 10 度一份），大幅降低计算量
+      
+      # ==========================================
+      # [核心优化 3]：消除“终点画大圈 (Pigtail)”现象
+      # ==========================================
+      analytic_expansion_ratio: 1.5 # 降低解析扩展比例，防止在离终点很远的地方强行画圆弧
+      minimum_turning_radius: 0.2  # 机器人的最小物理转弯半径（米），设小一点防止画大圈
+      
+      # ==========================================
+      # [行为惩罚权重]：决定行驶轨迹的“性格”
+      # ==========================================
+      reverse_penalty: 1.5         # 倒车惩罚：能往前开就往前开，空间不够时才倒车（切忌设为 0.0）
+      change_penalty: 0.1          # 换挡惩罚：防止在原地鬼畜地频繁“前进-后退”
+      non_straight_penalty: 1.2    # 走曲线的惩罚：适当允许走优美的弧线
+      cost_penalty: 2.0            # 靠近障碍物的惩罚：值越大，越倾向于走马路正中间
 # -------------------------------------------------------------------------
 # 4. 局部代价地图 (Local Costmap)
-# 机器人“眼下”的动态短时记忆地图，主要用于躲避移动障碍物或未建图的临时障碍
 # -------------------------------------------------------------------------
 local_costmap:
   local_costmap:
     ros__parameters:
-      transform_tolerance: 0.5   # 局部地图也加上容忍延迟
-      update_frequency: 5.0        # 内部计算和合并图层的频率 (5Hz)
-      publish_frequency: 2.0       # 向 ROS 系统 (如 RViz) 发送供显示的频率 (2Hz)
-      global_frame: odom           # 局部地图的参考坐标系（通常依赖里程计而不是全局静态图）
-      robot_base_frame: base_footprint  # 机器人的中心坐标系
-      use_sim_time: True
-      rolling_window: true         # 滚动窗口：为 True 表示局部地图始终以机器人为中心，跟着机器人一起移动
-      width: 3                     # 局部地图的横向宽度 (米)
-      height: 3                    # 局部地图的纵向高度 (米)
-      resolution: 0.05             # 地图精度，0.05 米/像素
-      robot_radius: 0.25           # ★ 极其重要：机器人的物理外围半径，用于计算膨胀区。半径以内视为致命障碍。
-      plugins: ["voxel_layer", "inflation_layer"] # 启用的地图图层
+      transform_tolerance: 1.0
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.05
+      footprint: "[[0.22, 0.225], [0.22, -0.225], [-0.215, -0.225], [-0.215, 0.225]]"  # <-- 加上这行真实轮廓
+      plugins: ["voxel_layer", "inflation_layer"]
       
-      # --- 体素图层 (用于将 2D/3D 传感器数据投射到地图上) ---
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
-        enabled: True              # 开启体素图层
-        publish_voxel_map: True    # 允许发布 3D 体素网格供可视化调试
-        origin_z: 0.0              # 体素网格底部高度
-        z_resolution: 0.05         # Z 轴方向的分辨率
-        z_voxels: 16               # Z 轴方向的层数 (16 * 0.05 = 0.8米高的检测空间)
-        max_obstacle_height: 2.0   # 超过 2 米高的障碍物将被忽略（因为撞不到）
-        mark_threshold: 0          # 判定体素内存在障碍物的点数阈值
-        observation_sources: scan  # 数据源名称声明
-        scan:
-          topic: /scan             # 订阅的雷达数据流
-          min_obstacle_height: 0.15  # 极其关键：无视 0.15 米以下的地板假障碍！
-          max_obstacle_height: 2.0 # 处理雷达数据时的最大截断高度
-          clearing: True           # 允许光束穿过空旷区域时“清除”掉该区域原先记忆的假障碍
-          marking: True            # 允许在打到物体的地方“标记”新的障碍物
-          data_type: "LaserScan"   # 数据类型
-          
-      # --- 膨胀图层 (让障碍物变胖，防止机器人擦边刮蹭) ---
-      inflation_layer:
-        plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0   # 惩罚递减梯度：值越小，膨胀区外围的代价值下降得越慢（缓冲带越宽）
-        inflation_radius: 0.55     # 障碍物的最大膨胀影响半径，超过 0.55 米以外的区域完全不受此障碍物影响
-
-# -------------------------------------------------------------------------
-# 5. 全局代价地图 (Global Costmap)
-# 整个场地的宏观长时记忆地图，主要用于 A* 寻找全局路径
-# -------------------------------------------------------------------------
-global_costmap:
-  global_costmap:
-    ros__parameters:
-      transform_tolerance: 0.5   # 全局地图也加上容忍延迟
-      update_frequency: 1.0        # 全局地图较大，更新频率不需要太快 (1Hz 即可)
-      publish_frequency: 1.0       # 发布频率 (1Hz)
-      global_frame: map            # 参考坐标系锁定为最高级的 map
-      robot_base_frame: base_footprint
-      use_sim_time: True
-      robot_radius: 0.25           # 全局地图也要知道机器人半径大小以作规划
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      
-      # --- 静态图层 (读取底层建好的地图) ---
-      static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        map_subscribe_transient_local: True # 启用 QoS 设置，确保能接收到迟来的地图数据
-        subscribe_to_updates: True # ★ SLAM 模式专属：允许图层实时接收并融合 SLAM 工具箱发布的最新局部探得地图
-        
-      # --- 障碍物图层 (叠加动态信息) ---
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
+        publish_voxel_map: True
+        origin_z: 0.0
+        z_resolution: 0.05
+        z_voxels: 16
+        max_obstacle_height: 2.0
+        mark_threshold: 0
         observation_sources: scan
         scan:
-          topic: /scan
-          min_obstacle_height: 0.15  # 同样无视地板
+          topic: /scan_filtered    # 已切换为过滤后的雷达话题
+          min_obstacle_height: 0.0
           max_obstacle_height: 2.0
           clearing: True
           marking: True
           data_type: "LaserScan"
           
-      # --- 膨胀图层 ---
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.55
+        cost_scaling_factor: 15.0    # [修改] 从 3.0 提高到 8.0（值越大，墙壁的推力衰减越快）
+        inflation_radius: 0.4      # 已修改为 0.3
+
+# -------------------------------------------------------------------------
+# 5. 全局代价地图 (Global Costmap)
+# -------------------------------------------------------------------------
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      transform_tolerance: 1.0
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      footprint: "[[0.22, 0.225], [0.22, -0.225], [-0.215, -0.225], [-0.215, 0.225]]"  # <-- 加上这行真实轮廓
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+        subscribe_to_updates: True
+        
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan_filtered    # 已切换为过滤后的雷达话题
+          min_obstacle_height: 0.15
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0   # [修改] 从 3.0 提高到 5.0
+        inflation_radius: 2.0      # 已修改为 0.5
 
 # -------------------------------------------------------------------------
 # 6. 碰撞监视器 (Collision Monitor)
-# 主动安全系统 (AEB)，独立于规划器运行，发现即将会撞车时强行切断电机动力
 # -------------------------------------------------------------------------
 collision_monitor:
   ros__parameters:
-    use_sim_time: True
     base_frame_id: "base_footprint"
     odom_frame_id: "odom"
     
-    # --- 速度指令拦截通道 ---
-    # 它在这里做“中间商”：从规划器拿到平滑速度，如果没有危险，就原样转发给底层；如果有危险，输出 0 速度。
     cmd_vel_in_topic: "cmd_vel_smoothed" 
     cmd_vel_out_topic: "cmd_vel"
     
-    transform_tolerance: 0.5       # TF 坐标系转换时的允许延迟超时 (秒)
-    source_timeout: 1.0            # 如果超过 1 秒没收到雷达数据，判定为传感器故障并停止移动
+    transform_tolerance: 0.5
+    source_timeout: 1.0
     
-    # 它的判断依据来源：激光雷达
     observation_sources: ["scan"]
     scan:
-      type: "scan"                 # 数据源类型
-      topic: "/scan"
+      type: "scan"
+      topic: "/scan_filtered"      # 已切换为过滤后的雷达话题
       
-    # --- 虚拟保险杠多边形 (Stop Box) ---
     polygons: ["stop_box"]
     stop_box:
       type: "polygon"
-      # 以车体中心为原点，画一个绝对保护框 (依次为前左、前右、后右、后左的 X,Y 坐标，单位米)
-      points: "[[0.25, 0.25], [0.25, -0.25], [-0.25, -0.25], [-0.25, 0.25]]"
-      action_type: "stop"          # 触发条件后的动作："stop" 意味着只要有雷达点进入这个多边形，立刻刹停电机
-      visualize: True              # 是否把这个多边形发布出来，供你在 RViz 中可视化查看
-      polygon_pub_topic: "polygon_stop" # 可视化话题名称
-      polygon_sub_topic: "polygon_sub"  # 填补它找不到静态点时的备用参数，防止报错
+      points: "[[0.22, 0.225], [0.22, -0.225], [-0.215, -0.225], [-0.215, 0.225]]"
+      action_type: "approach"
+      time_before_collision: 1.5   # 增加时间预判碰撞维度
+      visualize: True
+      polygon_pub_topic: "polygon_stop"
+      polygon_sub_topic: "polygon_sub"
 
 # =========================================================================
-# 7. 行为服务器 (Behavior Server) - 遇到死角时的自救动作（旋转、后退）
+# 7. 行为服务器 (Behavior Server)
 # =========================================================================
 behavior_server:
   ros__parameters:
-    use_sim_time: True
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
     cycle_frequency: 10.0
@@ -230,24 +306,42 @@ behavior_server:
       plugin: "nav2_behaviors::Wait"
 
 # =========================================================================
-# 8. 路径平滑服务器 (Smoother Server) - 去除 A* 规划出的路径折角
+# 8. 路径平滑服务器 (Smoother Server)
 # =========================================================================
 smoother_server:
   ros__parameters:
-    use_sim_time: True
-    smoother_plugins: ["SimpleSmoother"]
-    SimpleSmoother:
-      plugin: "nav2_smoother::SimpleSmoother"
-      tolerance: 1.0e-10
-      max_its: 1000
-      do_refinement: True
+    smoother_plugins: ["ConstrainedSmoother"]
+    
+    ConstrainedSmoother:
+      plugin: "nav2_constrained_smoother/ConstrainedSmoother"
+      
+      # --- 1. 倒车兼容性 ---
+      # [极其关键] 必须明确允许平滑倒车路径！否则倒车路径经过这里会被揉成一团乱码。
+      reversing_enabled: true      
+      
+      # --- 2. 运动学约束同步 ---
+      # [极其关键] 这里的转弯半径必须与 planner_server 里的 minimum_turning_radius 保持绝对一致！
+      minimum_turning_radius: 0.2  
+      
+      # --- 3. 性能与采样优化 ---
+      # 将原路径点稀释，不仅能大幅节省 CPU 算力，还能让短距离内的锯齿直接消失，曲线更长更平滑。
+      path_downsampling_factor: 3  
+      path_upsampling_factor: 1    # 平滑完之后不需要再插值加密，RPP 控制器自己会处理
+      
+      # --- 4. 优化器权重调节 (决定平滑的形态) ---
+      w_curve: 30.0                # 曲线平滑权重：值越大，路径越倾向于变成一根没有任何锐角的完美曲线
+      w_dist: 0.0                  # 偏离原路径的惩罚：设为 0.0，允许它稍微偏离规划器给出的原始粗糙路径，以此换取更顺滑的过弯弧线
+      w_obstacle: 2.0             # [修改] 从 30.0 暴降到 2.0。允许平滑后的绿色轨迹线紧贴墙壁，不再强行推开
+      
+      # --- 5. 求解器参数 ---
+      max_iterations: 70           # 数学求解器的最大迭代次数（70次足够平滑了，设太高会增加延迟）
+      debug_optimizer: false
 
 # =========================================================================
-# 9. 速度平滑器 (Velocity Smoother) - 让加减速更丝滑，防止轮子打滑
+# 9. 速度平滑器 (Velocity Smoother)
 # =========================================================================
 velocity_smoother:
   ros__parameters:
-    use_sim_time: True
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
@@ -261,11 +355,10 @@ velocity_smoother:
     velocity_timeout: 1.0
 
 # =========================================================================
-# 10. 航点跟随器 (Waypoint Follower) - 按顺序跑多个目标点
+# 10. 航点跟随器 (Waypoint Follower)
 # =========================================================================
 waypoint_follower:
   ros__parameters:
-    use_sim_time: True
     loop_rate: 200
     stop_on_failure: false
     waypoint_task_executor_plugin: "wait_at_waypoint"
@@ -274,11 +367,10 @@ waypoint_follower:
       waypoint_pause_duration: 200
 
 # =========================================================================
-# 11. 自动回充服务器 (Docking Server) - Jazzy 新增强制启动节点
+# 11. 自动回充服务器 (Docking Server)
 # =========================================================================
 docking_server:
   ros__parameters:
-    use_sim_time: True
     controller_frequency: 50.0
     initial_perception_timeout: 5.0
     wait_charge_timeout: 5.0
@@ -288,7 +380,6 @@ docking_server:
     max_retries: 3
     base_frame: "base_footprint"
     odom_frame: "odom"
-    # 就是这个参数缺失导致了你刚才的报错！
     dock_plugins: ["simple_dock"]
     simple_dock:
       plugin: "opennav_docking::SimpleChargingDock"
