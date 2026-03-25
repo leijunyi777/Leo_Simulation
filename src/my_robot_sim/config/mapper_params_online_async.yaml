@@ -30,7 +30,7 @@ slam_toolbox:
     min_laser_range: 0.0                              # 构建地图时，丢弃小于此距离的雷达点 (米)
     max_laser_range: 20.0                             # 构建地图时，丢弃大于此距离的雷达点 (米)
     minimum_time_interval: 0.1                        # 往位姿图中插入新节点的最小时间间隔 (秒)
-    transform_timeout: 0.5                            # 等待 TF 树变换的超时时间 (秒)
+    transform_timeout: 1.0                            # 等待 TF 树变换的超时时间 (秒)
     tf_buffer_duration: 30.0                           # TF 缓存保留的时间长度 (秒)
     stack_size_to_use: 40000000                       # 序列化地图时分配的线程栈大小 (约 40MB，防溢出)
     enable_interactive_mode: true                     # 是否在 RViz 中开启交互模式（允许手动拖拽修正节点）

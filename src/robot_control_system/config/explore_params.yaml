@@ -8,15 +8,15 @@
     # 与 nav2 / slam_toolbox 一致
     robot_base_frame: base_footprint
     # 探索结束后回到起点，然后不再发目标，由 RViz/Nav2 接收外部目标
-    return_to_init: true
+    return_to_init: false
     # 使用 SLAM 发布的 /map（与 Nav2 global costmap 一致）
     costmap_topic: map
     costmap_updates_topic: map_updates
     visualize: true
-    planner_frequency: 0.15
-    progress_timeout: 30.0
-    potential_scale: 3.0
+    planner_frequency: 0.5
+    progress_timeout: 50.0
+    potential_scale: 0.003
     orientation_scale: 0.0
-    gain_scale: 1.0
+    gain_scale: 2.0
     transform_tolerance: 0.5
-    min_frontier_size: 0.75
+    min_frontier_size: 0.3

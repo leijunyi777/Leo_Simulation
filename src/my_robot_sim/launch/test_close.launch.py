@@ -15,9 +15,12 @@ def generate_launch_description():
     leo_pkg_dir = get_package_share_directory('leo_description') # 获取 Leo 小车的包路径
 
     # 配置文件与模型路径
-    #os.path.join: 将多个路径组合成一个路径，用于获取文件路径
+    # os.path.join: 将多个路径组合成一个路径，用于获取文件路径
     urdf_file = os.path.join(leo_pkg_dir, 'urdf', 'leo_sim.urdf.xacro') 
-    world_file = os.path.join(sim_pkg_dir, 'worlds', 'testing_world.sdf')   
+    
+    # 【修改点 1】：加载新世界的 sdf 文件
+    world_file = os.path.join(sim_pkg_dir, 'worlds', 'simple.sdf')   
+    
     bridge_config = os.path.join(sim_pkg_dir, 'config', 'bridge.yaml')
     slam_params_file = os.path.join(sim_pkg_dir, 'config', 'mapper_params_online_async.yaml')
     explore_params_file = os.path.join(sim_pkg_dir, 'config', 'explore_params.yaml') # 自动探索参数文件路径
@@ -25,6 +28,7 @@ def generate_launch_description():
     # 获取参数文件和行为树文件的绝对路径
     nav2_params_file = os.path.join(sim_pkg_dir, 'config', 'nav2_params.yaml') # Nav2 参数文件路径
     custom_bt_path = os.path.join(sim_pkg_dir, 'config', 'navigate_to_pose_w_replanning_and_recovery.xml')
+    
     # ================= 使用 Command 动态解析 xacro =================
     # 以前是直接 read() 文本，现在需要调用系统命令 'xacro' 转换它
     robot_desc = Command(['xacro ', urdf_file])
@@ -44,7 +48,7 @@ def generate_launch_description():
         parameters=[{'robot_description': robot_desc, 'use_sim_time': True}]
     )
 
-    # 3. 启动 Joint State Publisher（唯一节点名，避免与 sim_bringup 同时运行时重名）
+    # 3. 启动 Joint State Publisher
     joint_state_publisher = Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
@@ -53,16 +57,16 @@ def generate_launch_description():
     )
 
     # 4. Spawn 机器人
-    # 将 -string 替换为 -topic，让 Gazebo 监听 RSP 发布解析好的 urdf
+    # 【修改点 2】：将 -world 参数改为上一节 SDF 文件内部定义的真实 world name
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
-        arguments=['-world', 'testing_world','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.02'],
+        arguments=['-world', 'mppi_testing_world','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.02'],
         output='screen'
     )
 
     delayed_spawn = TimerAction(
-        period=8.0,  # 延迟时间（秒），如果电脑加载 Gazebo 较慢，可以改成 8.0 或 10.0
+        period=8.0,  # 延迟时间（秒）
         actions=[spawn_robot]
     )
 
@@ -92,9 +96,7 @@ def generate_launch_description():
         parameters=[{'config_file': bridge_config, 'use_sim_time': True}],
     )
 
-    # 6 四方向车轮过滤：remapping 订阅 /scan、发布 /scan_filtered；
-    #     /scan_filtered 被 nav2_params.yaml 与 mapper_params_online_async.yaml（SLAM）使用。
-    #     注意：与 sim_bringup 二选一运行，避免重复启动同名节点。
+    # 6 四方向车轮过滤
     laser_filter_node = Node(
         package='robot_control_system',
         executable='four_wheel_filter',
@@ -105,7 +107,7 @@ def generate_launch_description():
             {'max_range': 12.0},
         ],
         remappings=[
-            ('scan', '/scan'),              # 原始雷达（bridge 发布）
+            ('scan', '/scan'),              
             ('scan_filtered', '/scan_filtered'),
         ],
     )
@@ -118,11 +120,10 @@ def generate_launch_description():
     # === 生成动态 YAML 文件对象 ===
     configured_params = RewrittenYaml(
         source_file=nav2_params_file,
-        root_key='', # 如果你的小车没有设置 namespace，这里留空即可
+        root_key='', 
         param_rewrites=param_substitutions,
         convert_types=True
     )
-
 
     # 7. 启动 Nav2 (纯导航模式)，延迟 10 秒让 SLAM 先发布 map 再起 Nav2
     nav2_bringup_node = IncludeLaunchDescription(
@@ -136,7 +137,7 @@ def generate_launch_description():
     )
     delayed_nav2 = TimerAction(period=12.0, actions=[nav2_bringup_node])
 
-    # 8. 键盘控制
+    # 8. 键盘控制 (已注释)
     teleop_node = Node(
         package='teleop_twist_keyboard',
         executable='teleop_twist_keyboard',
@@ -148,9 +149,7 @@ def generate_launch_description():
         package='rviz2',
         executable='rviz2',
         name='rviz2',
-        # 使用 arguments 加载配置文件
         arguments=['-d', rviz_config_file],
-        # 参数设置
         parameters=[{'use_sim_time': True}],
         output='screen'
     )
@@ -166,7 +165,6 @@ def generate_launch_description():
         }.items()
     )
 
- 
     return LaunchDescription([
         gz_sim,
         robot_state_publisher,
