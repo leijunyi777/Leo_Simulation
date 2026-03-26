@@ -51,7 +51,7 @@ controller_server:
       plugin: "nav2_mppi_controller::MPPIController"
       time_steps: 60                   # 预测未来步数
       model_dt: 0.1                   # 每步时间间隔 (56 * 0.05 = 预测未来 2.8 秒)
-      batch_size: 1200                 # [算力关键] 每次采样 2000 条轨迹 (如果 CPU 卡顿可降为 1000)
+      batch_size: 2000                 # [算力关键] 每次采样 2000 条轨迹 (如果 CPU 卡顿可降为 1000)
       
       # --- 运动学模型配置 ---
       motion_model: "DiffDrive"        # 明确差速底盘模型
@@ -99,7 +99,7 @@ controller_server:
       GoalCritic:                      # 努力靠近终点位置的裁判
         enabled: true
         cost_power: 1
-        cost_weight: 35.0     # [修改] 从 10.0 增加到 20.0，增强向终点走的意愿
+        cost_weight: 25.0     # [修改] 从 10.0 增加到 20.0，增强向终点走的意愿
         threshold_to_consider: 1.4
         
       GoalAngleCritic:                 # 努力对准终点角度的裁判（MPPI 实现自然原地微调的核心）
@@ -180,7 +180,7 @@ planner_server:
       reverse_penalty: 1.5         # 倒车惩罚：能往前开就往前开，空间不够时才倒车（切忌设为 0.0）
       change_penalty: 0.1          # 换挡惩罚：防止在原地鬼畜地频繁“前进-后退”
       non_straight_penalty: 1.2    # 走曲线的惩罚：适当允许走优美的弧线
-      cost_penalty: 2.0            # 靠近障碍物的惩罚：值越大，越倾向于走马路正中间
+      cost_penalty: 15.0            # 靠近障碍物的惩罚：值越大，越倾向于走马路正中间
 # -------------------------------------------------------------------------
 # 4. 局部代价地图 (Local Costmap)
 # -------------------------------------------------------------------------
@@ -195,7 +195,7 @@ local_costmap:
       rolling_window: true
       width: 3
       height: 3
-      resolution: 0.05
+      resolution: 0.02
       footprint: "[[0.22, 0.225], [0.22, -0.225], [-0.215, -0.225], [-0.215, 0.225]]"  # <-- 加上这行真实轮廓
       plugins: ["voxel_layer", "inflation_layer"]
       
@@ -255,8 +255,8 @@ global_costmap:
           
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0   # [修改] 从 3.0 提高到 5.0
-        inflation_radius: 2.0      # 已修改为 0.5
+        cost_scaling_factor: 1.5   # [修改] 从 3.0 提高到 5.0
+        inflation_radius: 3.0      # 已修改为 0.5
 
 # -------------------------------------------------------------------------
 # 6. 碰撞监视器 (Collision Monitor)
