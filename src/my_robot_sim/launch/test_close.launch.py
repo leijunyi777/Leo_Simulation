@@ -98,7 +98,7 @@ def generate_launch_description():
 
     # 6 四方向车轮过滤
     laser_filter_node = Node(
-        package='robot_control_system',
+        package='my_robot_sim',
         executable='four_wheel_filter',
         name='four_wheel_filter_nav',
         parameters=[

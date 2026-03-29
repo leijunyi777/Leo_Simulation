@@ -96,7 +96,7 @@ def generate_launch_description():
     #     /scan_filtered 被 nav2_params.yaml 与 mapper_params_online_async.yaml（SLAM）使用。
     #     注意：与 sim_bringup 二选一运行，避免重复启动同名节点。
     laser_filter_node = Node(
-        package='robot_control_system',
+        package='my_robot_sim',
         executable='four_wheel_filter',
         name='four_wheel_filter_nav',
         parameters=[
