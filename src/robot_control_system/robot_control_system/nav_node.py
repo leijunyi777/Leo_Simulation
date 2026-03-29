@@ -138,17 +138,15 @@ class NavControllerNode(Node):
         if msg.data:
             # 只要收到第一次 True，永久关闭压制功能
             if self.suppression_enabled:
-                self.get_logger().info('收到首次启动指令，永久解除初始压制状态。')
+                self.get_logger().info('首次启动：解除压制，把指挥权交给 explore_lite')
                 self.suppression_enabled = False
 
             self.nav_mode = "EXPLORE"
-            self.target_phase = "OBJECT"
-            
-            if self.pending_manip_fb_for_resume <= 0:
-                self.pub_explore_resume.publish(Bool(data=True))
-            if not self.explore_lite_active:
-                self.dispatch_random_goal()
+            # 2. 【关键】只发 resume，不要调用 self.dispatch_random_goal()
+            # 让 C++ 的 explore_lite 自己去算边界并发送目标
+            self.pub_explore_resume.publish(Bool(data=True))
         else:
+            self.nav_mode = "IDLE"
             self.pub_explore_resume.publish(Bool(data=False))
             if self.goal_handle:
                 self.goal_handle.cancel_goal_async()
@@ -167,7 +165,7 @@ class NavControllerNode(Node):
                 self._random_after_complete_timer = None
                 if self.nav_mode == "EXPLORE":
                     self.dispatch_random_goal()
-            self._random_after_complete_timer = self.create_timer(3.0, _start_random_after_complete)
+            self._random_after_complete_timer = self.create_timer(5.0, _start_random_after_complete)
         else:
             self.explore_lite_active = True
 

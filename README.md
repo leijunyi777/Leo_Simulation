@@ -73,6 +73,71 @@ ros2 launch my_robot_sim leo_sim_nav.launch.py
 3. **消除雷达贴墙盲区**：将 GPU Lidar 的 `min_range` 从默认的 0.35m 下调至 0.10m，防止近距离贴墙时代价地图被意外擦除导致的车体撞击。
 4. **统一 Base Frame 高度**：强制将 SLAM 与 Nav2 的参考坐标系设为 `base_footprint` (Z=0)，并设定生成高度为 `Z=0.02`，完美解决 RViz 中地图生成在车顶的“高空抛物”问题。
 
+
+## m-explore 探索节点：逻辑与本仓库改动
+
+探索节点源码位于 `src/m-explore-ros2/explore/src/explore.cpp`。相对上游 **explore_lite**（m-explore ROS2），本仓库在**结束条件、防卡死、黑名单与目标切换**上做了定制，便于在仿真/实车中与 Nav2 和上层 FSM 协同。实现细节以源码为准；修改 `explore.cpp` 时请同步更新该文件顶部的中文说明块。
+
+### 总体流程
+
+- 节点启动后连接 Nav2 的 `navigate_to_pose` Action，按 `planner_frequency` 定时调用 `makePlan()`。
+- 在全局代价地图上搜索 **frontier**，选取代价最优且不在黑名单的目标发给 Nav2；到达或失败后由 `reachedGoal()` 再次触发规划（与原版思路一致）。
+- **`explore/status`**（`explore_lite_msgs/ExploreStatus`，QoS 为 `transient_local`）：启动即 `EXPLORATION_STARTED`；正常扫完或熔断结束为 `EXPLORATION_COMPLETE`；手动 `stop()` 为 `EXPLORATION_PAUSED`；`resume()` 为 `EXPLORATION_IN_PROGRESS` 等；若开启回原点，另有 `RETURNING_TO_ORIGIN` / `RETURNED_TO_ORIGIN`。
+- **`explore/resume`**（`std_msgs/Bool`）：`true` 调用 `resume()`，`false` 调用 `stop()`（与 README 下文 `/nav/cmd_explore` 联动时，上层通常会向该话题发指令）。
+
+### 探索“进度”指标（非 SLAM 官方覆盖率）
+
+在全局代价地图栅格上统计：`ratio = free_cells / (free_cells + unknown_cells)`（自由格与未知格之和为分母）。
+
+- **启动后约 30 s** 视为预热：若分母为 0 仅打日志，避免空图误触发结束。
+- 预热期内会节流打印“探索预热中…”；预热后约每 **5 s** 打印一次当前 `ratio`（百分比）。
+
+### 面积 / 停滞熔断（`makePlan` 前半段）
+
+- 预热后若 **ratio 几乎不变**（相邻周期变化绝对值 ≤ **0.0001**）持续过久：  
+  - `ratio < 85%` 时阈值 **40 s**；  
+  - `ratio ≥ 85%` 时阈值 **15 s**。  
+  超时视为扩图停滞 → 发布 `EXPLORATION_COMPLETE` 并 `stop(true)`。
+- **`ratio > 95%`** → 视为探索率达标 → 同样 `EXPLORATION_COMPLETE` 并 `stop(true)`。
+
+### 物理防卡死看门狗（取得机器人位姿之后）
+
+- 若 **10 s** 内位移不足 **0.15 m**，且此前确实发过目标（`prev_goal_` 非全零）：判定顶墙/卡住 → 当前目标入黑名单、`async_cancel_all_goals()`、**清空 `prev_goal_` 与 `prev_goal_cost_`**（避免与决策逻辑冲突），本周期直接 `return`；下一周期会改选其它 frontier。  
+- 源码注释中若出现“20 秒”等字样，以 **10.0 s / 0.15 m** 为准。
+
+### 黑名单与“扫盲”重试
+
+- **`frontier_blacklist_`**：导航 **ABORT**、**progress_timeout** 无进展、看门狗拉黑等会加入。
+- **`goalOnBlacklist()`**：在代价地图分辨率下，以 **5 格**（`tolerace`，变量名如此拼写）为容差判断目标是否与黑名单点近邻。
+- **无 frontier**：若黑名单非空，最多 **清空黑名单重试 3 次**；若所有 frontier 都在黑名单，最多再清空 **1 次**。成功找到可用 frontier 后重试计数归零。
+
+### 决策粘性（减少路口反复换目标）
+
+若新最优 frontier 与上一目标不同，但代价与 `prev_goal_cost_` 相差不到约 **25%**，本周期**不发新 goal**，让 Nav2 继续执行原目标。
+
+### 与原版一致的进展超时
+
+- 若离当前目标更近会刷新 `last_progress_`；若超过参数 **`progress_timeout`**（默认 30 s）仍无进展且非 `resuming_`，将当前目标拉黑并**递归** `makePlan()`。
+- 若本周期判定与上一目标 **same_point**（约 **1 cm** 内），直接 `return`，不打断 Nav2。
+
+### 结束与回原点
+
+- **`stop(finished_exploring)`**：`finished_exploring == true` 时不发 `PAUSED`（仅取消定时器与 goal）。
+- 若参数 **`return_to_init`** 为 true 且探索**正常结束**（`finished_exploring`），会再发 `RETURNING_TO_ORIGIN` 并导航回启动时记录的位姿。
+
+### 常用参数（`explore` 节点）
+
+| 参数 | 含义 |
+|------|------|
+| `planner_frequency` | 规划频率（Hz），默认 1.0 |
+| `progress_timeout` | 向目标无进展超时（秒），默认 30.0 |
+| `return_to_init` | 探索结束后是否回启动位姿 |
+| `min_frontier_size`、`potential_scale`、`gain_scale`、`orientation_scale` | frontier 搜索与代价权重（与上游一致） |
+| `visualize` | 是否在 RViz 发布 frontier 标记 |
+
+---
+
+
 ## 调试前提准备
 
 在开始单独测试 `nav_node` 之前，请确保以下基础组件已经运行：

@@ -13,10 +13,14 @@
     costmap_topic: map
     costmap_updates_topic: map_updates
     visualize: true
-    planner_frequency: 0.5
-    progress_timeout: 50.0
-    potential_scale: 0.003
+    planner_frequency: 0.3 # 2Hz
+    # 探索“尽量完整”的关键：给同一前沿更长的等待时间，避免过早黑名单/停止
+    progress_timeout: 30.0  #如果它 30 秒钟没能让地图变白，立刻把当前点拉黑，换下一个绿球试。这样它会跳过那些去不了的地方。
+    # 降低距离惩罚，让前沿选择不过度偏向“离得最近但贡献不大的前沿”
+    potential_scale: 0.001
     orientation_scale: 0.0
-    gain_scale: 2.0
+    # 提高前沿规模的奖励，让算法更倾向于覆盖更大未知边界的前沿
+    gain_scale: 3.0
     transform_tolerance: 0.5
-    min_frontier_size: 0.3
+    # 减小最小前沿尺寸阈值，减少狭窄通道/小开口导致的“前沿被过滤”
+    min_frontier_size: 0.4
