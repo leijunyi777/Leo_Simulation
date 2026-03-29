@@ -30,7 +30,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            "four_wheel_filter = robot_control_system.four_wheel_filter_node:main",
+            "four_wheel_filter = my_robot_sim.four_wheel_filter_node:main",
         ],
     },
 )

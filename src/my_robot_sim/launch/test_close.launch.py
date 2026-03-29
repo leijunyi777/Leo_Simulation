@@ -17,14 +17,13 @@ def generate_launch_description():
     # 配置文件与模型路径
     # os.path.join: 将多个路径组合成一个路径，用于获取文件路径
     urdf_file = os.path.join(leo_pkg_dir, 'urdf', 'leo_sim.urdf.xacro') 
-    
     # 【修改点 1】：加载新世界的 sdf 文件
     world_file = os.path.join(sim_pkg_dir, 'worlds', 'simple.sdf')   
-    
     bridge_config = os.path.join(sim_pkg_dir, 'config', 'bridge.yaml')
     slam_params_file = os.path.join(sim_pkg_dir, 'config', 'mapper_params_online_async.yaml')
     explore_params_file = os.path.join(sim_pkg_dir, 'config', 'explore_params.yaml') # 自动探索参数文件路径
     rviz_config_file = os.path.join(sim_pkg_dir, 'rviz', 'sim.rviz')
+    ekf_config_path = os.path.join(sim_pkg_dir, 'config', 'ekf.yaml')
     # 获取参数文件和行为树文件的绝对路径
     nav2_params_file = os.path.join(sim_pkg_dir, 'config', 'nav2_params.yaml') # Nav2 参数文件路径
     custom_bt_path = os.path.join(sim_pkg_dir, 'config', 'navigate_to_pose_w_replanning_and_recovery.xml')
@@ -165,11 +164,21 @@ def generate_launch_description():
         }.items()
     )
 
+     #11 定义 EKF 节点
+    ekf_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
+        parameters=[ekf_config_path]
+    )
+
     return LaunchDescription([
         gz_sim,
         robot_state_publisher,
         joint_state_publisher,
         bridge,
+        ekf_node,
         laser_filter_node,
         delayed_spawn,
         delayed_kickstart,

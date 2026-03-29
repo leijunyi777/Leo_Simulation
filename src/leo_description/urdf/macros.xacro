@@ -531,9 +531,10 @@
       <sensor type="imu" name="leo_imu_sensor">
         <update_rate>100</update_rate>
         <visualize>true</visualize>
-        <topic>${link_prefix}imu/data_raw</topic>
-        <always_on>1</always_on>
+        <topic>/${link_prefix}imu/data_raw</topic>
+        <always_on>true</always_on>
         <gz_frame_id>${link_prefix}imu_frame</gz_frame_id>
+        <imu/>
       </sensor>
     </gazebo>
     
@@ -576,7 +577,7 @@
         <odom_publish_frequency>20</odom_publish_frequency>
         <topic>${link_prefix}cmd_vel</topic>
         <odom_topic>${link_prefix}odom</odom_topic>
-        <tf_topic>${link_prefix}tf</tf_topic>
+        <!-- <tf_topic>${link_prefix}tf</tf_topic> -->
         <max_linear_acceleration>2.5</max_linear_acceleration>
         <max_angular_acceleration>3</max_angular_acceleration>
         <min_linear_acceleration>-2.5</min_linear_acceleration>
