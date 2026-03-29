@@ -49,9 +49,9 @@ controller_server:
     # =====================================================================
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
-      time_steps: 60                   # 预测未来步数
+      time_steps: 30                   # 预测未来步数
       model_dt: 0.1                   # 每步时间间隔 (56 * 0.05 = 预测未来 2.8 秒)
-      batch_size: 2000                 # [算力关键] 每次采样 2000 条轨迹 (如果 CPU 卡顿可降为 1000)
+      batch_size: 1500                 # [算力关键] 每次采样 2000 条轨迹 (如果 CPU 卡顿可降为 1000)
       
       # --- 运动学模型配置 ---
       motion_model: "DiffDrive"        # 明确差速底盘模型
@@ -256,7 +256,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 1.5   # [修改] 从 3.0 提高到 5.0
-        inflation_radius: 3.0      # 已修改为 0.5
+        inflation_radius: 2.0      # 已修改为 0.5
 
 # -------------------------------------------------------------------------
 # 6. 碰撞监视器 (Collision Monitor)

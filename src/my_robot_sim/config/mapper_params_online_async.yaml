@@ -24,7 +24,7 @@ slam_toolbox:
     debug_logging: false                              # 是否开启底层算法的调试日志（平时建议关闭）
     throttle_scans: 1                                 # 雷达截流：1表示处理每一帧，2表示每两帧处理一帧以省CPU
     transform_publish_period: 0.02                    # 发布 map -> odom TF 的周期 (0.02秒 = 50Hz)
-    map_update_interval: 0.2                          # 向话题发布可视化二维栅格地图的间隔时间 (秒)
+    map_update_interval: 1.0                          # 向话题发布可视化二维栅格地图的间隔时间 (秒)
     resolution: 0.05                                  # 地图分辨率：0.05 代表每个像素是 5cm x 5cm
     restamp_tf: false                                 # 是否用系统当前时间覆盖雷达的时间戳
     min_laser_range: 0.0                              # 构建地图时，丢弃小于此距离的雷达点 (米)
@@ -40,8 +40,8 @@ slam_toolbox:
     # ==========================================
     use_scan_matching: true                           # 必须开启：使用雷达扫描匹配来修正轮式里程计
     use_scan_barycenter: true                         # 使用扫描点的几何重心作为匹配的中心基准
-    minimum_travel_distance: 0.02                      # 机器人平移超过 0.5 米，才会记录一个新的地图节点
-    minimum_travel_heading: 0.02                       # 机器人旋转超过 0.5 弧度(约28度)，才会记录新节点
+    minimum_travel_distance: 0.05                      # 机器人平移超过 0.5 米，才会记录一个新的地图节点
+    minimum_travel_heading: 0.05                       # 机器人旋转超过 0.5 弧度(约28度)，才会记录新节点
     check_min_dist_and_heading_precisely: false       # 是否严格、精确地检查上述距离/角度阈值
     scan_buffer_size: 30                              # 扫描匹配时，内存中保留的局部历史雷达帧数量
     scan_buffer_maximum_scan_distance: 10.0           # 局部匹配只考虑距离当前位置 10 米以内的历史节点

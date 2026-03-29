@@ -538,12 +538,12 @@
       </sensor>
     </gazebo>
     
-
+  
     <gazebo reference="${link_prefix}laser">
       <sensor name="laser_sensor" type="gpu_lidar">
         <pose>0 0 0 0 0 0</pose>
         <topic>${link_prefix}scan</topic>
-        <update_rate>10</update_rate>
+        <update_rate>15</update_rate>
         <gz_frame_id>${link_prefix}laser</gz_frame_id>
         <lidar>
           <scan>

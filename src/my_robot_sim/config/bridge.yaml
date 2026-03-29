@@ -22,11 +22,12 @@
 
 # 4. TF 坐标树 (Gazebo 物理引擎 -> ROS)
 # 这一步极其关键，把 Gazebo 计算好的 odom -> base_link 传递给 ROS 系统
-- ros_topic_name: "/tf"
-  gz_topic_name: "/tf"
-  ros_type_name: "tf2_msgs/msg/TFMessage"
-  gz_type_name: "gz.msgs.Pose_V"
-  direction: GZ_TO_ROS
+# 使用EKF生成 odom -> base_link
+# - ros_topic_name: "/tf"
+#   gz_topic_name: "/tf"
+#   ros_type_name: "tf2_msgs/msg/TFMessage"
+#   gz_type_name: "gz.msgs.Pose_V"
+#   direction: GZ_TO_ROS
 
 # 5. 虚拟时间同步 (让 ROS 使用 Gazebo 里面的流逝时间)
 - ros_topic_name: "/clock"
