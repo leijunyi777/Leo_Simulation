@@ -129,12 +129,21 @@ private:
 
   std::vector<geometry_msgs::msg::Point> frontier_blacklist_;
   geometry_msgs::msg::Point prev_goal_;
+  double prev_goal_cost_;
   double prev_distance_;
+  rclcpp::Time start_time_;
+  double last_progress_ratio_ = 0.0;
+  rclcpp::Time last_progress_change_time_;
   rclcpp::Time last_progress_;
   size_t last_markers_count_;
 
   geometry_msgs::msg::Pose initial_pose_;
   void returnToInitialPose(void);
+
+  // 用于位姿看门狗（防卡死）的变量
+  geometry_msgs::msg::Pose watchdog_last_pose_;
+  rclcpp::Time watchdog_last_time_;
+  bool watchdog_initialized_ = false;
 
   // parameters
   double planner_frequency_;
