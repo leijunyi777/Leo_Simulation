@@ -281,29 +281,29 @@ collision_monitor:
     stop_box:
       type: "polygon"
       points: "[[0.215, 0.22], [0.215, -0.22], [-0.21, -0.22], [-0.21, 0.22]]"
-      action_type: "approach"
+      action_type: "approach"  # 接近行为，机器人会尽可能靠近障碍物，避免碰撞
       time_before_collision: 1.5   # 增加时间预判碰撞维度
       visualize: True
-      polygon_pub_topic: "polygon_stop"
-      polygon_sub_topic: "polygon_sub"
+      polygon_pub_topic: "polygon_stop"  # 停止障碍物轮廓话题
+      polygon_sub_topic: "polygon_sub"  # 停止障碍物轮廓话题
 
 # =========================================================================
 # 7. 行为服务器 (Behavior Server)
 # =========================================================================
-behavior_server:
-  ros__parameters:
-    costmap_topic: local_costmap/costmap_raw
-    footprint_topic: local_costmap/published_footprint
+behavior_server: #功能服务器，用于处理机器人的行为，如旋转、后退、等待等
+  ros__parameters: 
+    costmap_topic: local_costmap/costmap_raw  # 局部代价地图
+    footprint_topic: local_costmap/published_footprint  # 局部代价地图的轮廓
     cycle_frequency: 10.0
-    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]  # 添加 spin 插件
     spin:
-      plugin: "nav2_behaviors::Spin"
+      plugin: "nav2_behaviors::Spin"  # spin 插件 逆时针旋转 0.7853981633974483 rad
     backup:
-      plugin: "nav2_behaviors::BackUp"
+      plugin: "nav2_behaviors::BackUp"  # backup 插件 后退 0.2m
     drive_on_heading:
-      plugin: "nav2_behaviors::DriveOnHeading"
+      plugin: "nav2_behaviors::DriveOnHeading"  # drive_on_heading 插件 沿着当前航向行驶
     wait:
-      plugin: "nav2_behaviors::Wait"
+      plugin: "nav2_behaviors::Wait"  # wait 插件 等待 2s
 
 # =========================================================================
 # 8. 路径平滑服务器 (Smoother Server)
@@ -357,32 +357,32 @@ velocity_smoother:
 # =========================================================================
 # 10. 航点跟随器 (Waypoint Follower)
 # =========================================================================
-waypoint_follower:
+waypoint_follower: #航点跟随器，用于跟随航点，航点是预定义的机器人路径点，机器人会按照航点行驶
   ros__parameters:
-    loop_rate: 200
-    stop_on_failure: false
-    waypoint_task_executor_plugin: "wait_at_waypoint"
+    loop_rate: 200  # 循环频率 200Hz
+    stop_on_failure: false  # 如果航点跟随失败，是否停止
+    waypoint_task_executor_plugin: "wait_at_waypoint"  # 航点任务执行器插件
     wait_at_waypoint:
-      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
-      waypoint_pause_duration: 200
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"  # 等待航点插件
+      waypoint_pause_duration: 200  # 等待航点时间 200ms
 
 # =========================================================================
 # 11. 自动回充服务器 (Docking Server)
 # =========================================================================
-docking_server:
-  ros__parameters:
-    controller_frequency: 50.0
-    initial_perception_timeout: 5.0
-    wait_charge_timeout: 5.0
-    dock_approach_timeout: 30.0
-    undock_linear_tolerance: 0.05
-    undock_angular_tolerance: 0.1
-    max_retries: 3
-    base_frame: "base_footprint"
-    odom_frame: "odom"
-    dock_plugins: ["simple_dock"]
+docking_server: #自动回充服务器，用于自动回充，机器人会自动回到充电桩充电
+  ros__parameters: 
+    controller_frequency: 50.0  # 控制频率 50Hz
+    initial_perception_timeout: 5.0  # 初始感知时间 5s
+    wait_charge_timeout: 5.0  # 等待充电时间 5s
+    dock_approach_timeout: 30.0  # 接近充电桩时间 30s
+    undock_linear_tolerance: 0.05  # 离开充电桩线性误差 0.05m
+    undock_angular_tolerance: 0.1  # 离开充电桩角度误差 0.1rad  
+    max_retries: 3  # 最大重试次数 3  
+    base_frame: "base_footprint"  # 基坐标系 base_footprint
+    odom_frame: "odom"  # 里程计坐标系 odom
+    dock_plugins: ["simple_dock"]  # 充电桩插件 simple_dock
     simple_dock:
-      plugin: "opennav_docking::SimpleChargingDock"
-      docking_threshold: 0.05
-      staging_x_offset: -0.5
-      use_external_detection_pose: true
+      plugin: "opennav_docking::SimpleChargingDock"  # 充电桩插件 simple_dock
+      docking_threshold: 0.05  # 充电桩阈值 0.05
+      staging_x_offset: -0.5  # 充电桩 x 偏移 -0.5m
+      use_external_detection_pose: true  # 使用外部检测位姿

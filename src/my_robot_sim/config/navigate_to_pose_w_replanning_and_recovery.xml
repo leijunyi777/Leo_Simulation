@@ -43,9 +43,12 @@
               <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
             </Sequence>
             
-            <Wait wait_duration="2.0"/>
-            
-            <BackUp backup_dist="0.20" backup_speed="0.15" error_code_id="{backup_code_id}"/>
+            <!-- 等待 2s → 逆时针 45°(π/4 rad) → 退后 0.2m -->
+            <Sequence name="WaitSpinThenBackUp">
+              <Wait wait_duration="2.0"/>
+              <Spin spin_dist="0.7853981633974483" error_code_id="{spin_error_code}"/>
+              <BackUp backup_dist="0.20" backup_speed="0.15" error_code_id="{backup_code_id}"/>
+            </Sequence>
             
           </RoundRobin>
         </ReactiveFallback>
