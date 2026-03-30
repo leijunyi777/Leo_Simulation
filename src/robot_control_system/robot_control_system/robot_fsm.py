@@ -277,7 +277,7 @@ class RobotControlNode(Node):
                 if miss_count >= self.grasp_miss_threshold:
                     self.get_logger().info("GRASP SUCCESS (Object absent).")
                     self.arm_action_done = False
-                    self.pub_manip_fb.publish(Bool(data=True))
+                    self.pub_manip_fb.publish(Bool(data=True)) 
                     self.transition_to_state(STATE_MOVE_TO_BOX, "Heading to Target Box.")
                 
                 elif ticks_since_check > self.grasp_miss_threshold * 2:
@@ -288,7 +288,9 @@ class RobotControlNode(Node):
                         self.get_logger().info("GRASP FAILED 5 TIMES. Marking 'deferred'.")
                         if self.active_target_color in self.map_hash:
                             self.map_hash[self.active_target_color]['status'] = 'deferred'
-                        self.pub_manip_fb.publish(Bool(data=True))
+
+                        self.pub_manip_fb.publish(Bool(data=True)) 
+                        self.active_target_color = "NONE" 
                         self.transition_to_state(STATE_SEARCH, "Resuming Search.")
                     else:
                         self.get_logger().info(f"GRASP FAILED. Retrying (Attempt {self.grasp_attempts+1}/5)")
@@ -299,23 +301,23 @@ class RobotControlNode(Node):
 
         elif self.current_state == STATE_DROP:
             if self.arm_action_done:
-                miss_count = self.vision_msg_tick - self.last_obj_update_tick
-                if miss_count >= self.drop_miss_threshold:
-                    self.get_logger().info("DROP SUCCESS.")
-                    self.arm_action_done = False
-                    self.pub_manip_fb.publish(Bool(data=True))
-                    
-                    if self.active_target_color in self.map_hash:
-                        self.map_hash[self.active_target_color]['status'] = 'solved'
+                # Assuming success after the drop sequence completes
+                self.get_logger().info("DROP ACTION COMPLETED. Assuming success.")
+                self.arm_action_done = False
+                self.pub_manip_fb.publish(Bool(data=True)) 
+                
+                if self.active_target_color in self.map_hash:
+                    self.map_hash[self.active_target_color]['status'] = 'solved'
 
-                    self.cycle_count += 1
-                    self.active_target_color = "NONE"
+                self.cycle_count += 1
+                self.active_target_color = "NONE"
 
-                    if self.cycle_count >= self.max_cycles:
-                        self.get_logger().info('ALL 3 CYCLES COMPLETED. MISSION ACCOMPLISHED.')
-                        raise SystemExit
-                    else:
-                        self.transition_to_state(STATE_SEARCH, f"Cycle {self.cycle_count} done! Resuming Search.")
+                if self.cycle_count >= self.max_cycles:
+                    self.get_logger().info('ALL 3 CYCLES COMPLETED. MISSION ACCOMPLISHED.')
+                    raise SystemExit
+                else:
+                    self.transition_to_state(STATE_SEARCH, f"Cycle {self.cycle_count} done! Resuming Search.")
+
 
     def transition_to_state(self, new_state, log_msg=""):
         """
