@@ -11,6 +11,9 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ErrorStatus.msg"
   "msg/ObjectTarget.msg"
+  "msg/GripperState.msg"
+  "msg/GripperPose.msg"
+  "msg/CamArmPose.msg"
 )
 
 ament_export_dependencies(rosidl_default_runtime)

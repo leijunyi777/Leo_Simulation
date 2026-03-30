@@ -1,123 +1,76 @@
-# Robot Control System
+# README
 
-This project implements an end-to-end ROS 2 solution for autonomous **search–pick–place** with decoupled microservices. The **Main Controller** governs a strict finite‑state machine (FSM), while **Vision**, **Navigation**, and **Manipulator** act as focused actuators. Semantic memory is maintained per color, enabling the robot to pair objects with their matching boxes and complete **3 full cycles** before automatic shutdown.
+## Understand the Master Control Code in 10 Minutes: ROS 2 FSM Design & Communication
 
+>This document breaks down the `robot_control_node`. 
 
-## 1. System Architecture
+### 1. System Architecture & Communication Mechanisms
 
-All components are decoupled and communicate via ROS 2 topics and the Nav2 action server. The FSM governs **control flow**, while actuators handle **data flow** (estimation, pathing, manipulation).
+The Master Control Node acts as the "Brain" (control flow), while other modules act as sensors or actuators (data flow). They communicate entirely asynchronously via **ROS 2 Topics**.
 
-| Node                  | Runtime Name               | Responsibility                                                                                                                                                                                                                                 |
-| :-------------------- | :------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **robot\_fsm**        | `robot_control_node`       | **Brain & FSM.** Maintains per‑color semantic memory. Persists `map` coordinates for navigation and always refreshes `camera_link` coordinates for manipulation **right at action time** to minimize motion error. Publishes boolean triggers. |
-| **camera\_node**      | `vision_node`              | **Eyes.** RealSense frames → YOLOv8 detections (top‑k). Publishes `{color, type ∈ {object, box}, x, y, z}` in `camera_link`.                      |
-| **nav\_node**         | `nav_controller_node`      | **Smart Legs.** Consumes `/nav/goal_point` (`PointStamped` in `map`). Computes yaw to face the target and stops at a safe **0.25 m standoff** for arm operation.                                                                               |
-| **manipulator\_node** | `manipulator_control_node` | **Arm & Gripper.** Consumes `/arm/grasp_pose` and `/arm/grasp_status`. Drives MyCobot 280 with open‑loop moves.                                                                                                                                |
+#### 1.1 Node Responsibilities
 
-**TF Requirement:** A valid TF tree `map → odom → base_link → camera_link` is required. The controller transforms detections from `camera_link` to `map` for memory (navigation), while manipulation uses the latest `camera_link` pose at the moment of action.
+| Node | Role | Core Responsibility |
+| --- | --- | --- |
+| **`robot_control_node`** | **Brain** | Runs the core FSM, manages color-based semantic memory, and dispatches global/local coordinates to actuators. |
+| **`camera_node`** | **Eyes** | Processes camera frames (e.g., YOLOv8) and outputs 3D coordinates (in the `camera_link` frame) with color and type. |
+| **`nav_node`** | **Legs** | Receives `map` coordinates from the Master, plans paths, and navigates the chassis to a safe standoff distance. |
+| **`manipulator_node`** | **Arm** | Receives grasp/place coordinates (in `camera_link`) and gripper control signals to execute physical movements. |
 
+#### 1.2 Communication Interfaces (API)
 
-
-## 2. Finite State Machine (FSM)
-
-The robot repeats the full mission **three times** and then shuts down. **No wall‑clock timers are used** for GRASP/DROP verification. Instead, success is inferred when the **active color’s `object`** receives **no new updates** across **N consecutive vision messages** (miss thresholds; defaults below).
-
-### State Flow
-
-1.  **INIT**
-    *   **Logic:** Probe the hardware graph. Checks that Vision publishes, and Nav/Arm subscribe as required.
-    *   **Transition:** When all required endpoints are alive → **SEARCH**.
-
-2.  **SEARCH**
-    *   **Logic:** Toggle exploration (`/nav/cmd_explore = True`). Build **color → {object, box}** memory:
-        *   **`cam_pose`** (in `camera_link`) is **always** stored per detection.
-        *   **`map_pose`** is stored **opportunistically** when TF is available.
-    *   **Transition:** When a color has **both** `object.map_pose` **and** `box.map_pose` → set `active_target_color` → **MOVE\_TO\_OBJECT**.
-
-3.  **MOVE\_TO\_OBJECT**
-    *   **Logic:** Publish the **object’s `map` point**. Nav computes yaw and standoff autonomously.
-    *   **Transition:** On `/nav/goal_reached == True` → **GRASP**.
-
-4.  **GRASP** *(event‑driven, no timers)*
-    *   **Logic:** Immediately dispatch the **latest** `camera_link` pose of the **object** to the arm and **reset the miss baseline**.
-    *   **Success Criterion:** If the active color’s `object` receives **no new vision updates** for **`grasp_miss_threshold`** consecutive messages → **success** → **MOVE\_TO\_BOX**.
-    *   **Otherwise:** Keep waiting (no timeouts).
-
-5.  **MOVE\_TO\_BOX**
-    *   **Logic:** Publish the **box’s `map` point** for navigation.
-    *   **Transition:** On `/nav/goal_reached == True` → **DROP**.
-
-6.  **DROP** *(event‑driven, no timers)*
-    *   **Logic:** Dispatch the **latest** `camera_link` pose of the **box** to the arm and **reset the miss baseline**.
-    *   **Success Criterion:** If the active color’s `object` continues to receive **no new updates** for **`drop_miss_threshold`** consecutive messages → **success**:
-        *   Increment cycle count.
-        *   If `< 3`: clear memory of the completed color, reset `active_target_color = "NONE"` → **SEARCH**.
-        *   Else: **Shutdown**.
-
-### Output Control Matrix
-
-The FSM drives the actuators with a compact 4‑variable boolean matrix:
-
-| STATE                 | NAV\_EXPLORE | NAV\_GOTO | ARM\_GRASP | ARM\_DROP |
-| :-------------------- | :----------- | :-------- | :--------- | :-------- |
-| **\[0] INIT**         | False        | False     | False      | False     |
-| **\[1] SEARCH**       | True         | False     | False      | False     |
-| **\[2] MOVE\_OBJECT** | False        | True      | False      | False     |
-| **\[3] GRASP**        | False        | False     | True       | False     |
-| **\[4] MOVE\_BOX**    | False        | True      | False      | False     |
-| **\[5] DROP**         | False        | False     | False      | True      |
-
-> **Notes:**
->
-> *   `NAV_EXPLORE` is realized by publishing `/nav/cmd_explore`.
-> *   `NAV_GOTO` is realized by continuously publishing `/nav/goal_point` (timestamp refreshed each publish).
-> *   `ARM_GRASP/ARM_DROP` are realized by publishing `/arm/grasp_pose` and `/arm/grasp_status` with appropriate semantics.
-
-***
-
-## 3. Communication API (Topics & Interfaces)
-
-### Controller → Actuators (Outbound)
-
-*   **`/nav/goal_point`** — `geometry_msgs/PointStamped`  
-    Target point in **`map`**. The controller **refreshes the message timestamp** on each publish. Nav synthesizes yaw and applies a 0.25 m standoff.
-
-*   **`/nav/cmd_explore`** — `std_msgs/Bool`  
-    Exploration trigger (`True` = explore, `False` = stop).
-
-*   **`/arm/grasp_pose`** — `my_robot_interfaces/CamArmPose`  
-    Target **`camera_link`** pose for the manipulator (`x, y, z`). Used for both grasp and drop; the intent is indicated by `/arm/grasp_status`.
-
-*   **`/arm/grasp_status`** — `my_robot_interfaces/GripperState`  
-    Gripper command (`grip: True` to close/pick, `False` to open/place).
-
-### Actuators/Vision → Controller (Inbound)
-
-*   **`/detected_object`** — `my_robot_interfaces/ObjectTarget`  
-    YOLO detection in **`camera_link`** with `{name ∈ {object, box}, color, x, y, z}`.
-
-*   **`/nav/goal_reached`** — `std_msgs/Bool`  
-    `True` when Nav reports successful arrival.
+| Topic | Msg Type | Direction | Purpose |
+| --- | --- | --- | --- |
+| **`/nav/goal_point`** | `PointStamped` | **Out** (Pub) | Sends global target points (`map` frame) to Navigation. |
+| **`/nav/cmd_explore`** | `Bool` | **Out** (Pub) | Toggles the chassis random exploration mode (True/False). |
+| **`/arm/grasp_pose`** | `CamArmPose` | **Out** (Pub) | Sends relative target points (`camera_link` frame) to the Arm. |
+| **`/arm/grasp_status`** | `GripperState` | **Out** (Pub) | Controls the gripper: Open (`True`) or Close (`False`). |
+| **`/arm/initial_position`** | `GripperState` | **Out** (Pub) | Commands the arm to retreat to a safe, initial waiting pose. |
+| **`/detection_state`** | `Bool` | **In** (Sub) | Vision node heartbeat; confirms the camera is alive and streaming. |
+| **`/detected_object`** | `ObjectTarget` | **In** (Sub) | Receives real-time 3D object coordinates from the Vision node. |
+| **`/nav/goal_reached`** | `Bool` | **In** (Sub) | Receives success feedback when Navigation reaches the target. |
 
 
+### 2. Core Variables & Data Structures
 
-### Nav2 Action (used inside `nav_controller_node`)
+Before understanding the logic, you must understand how the robot "remembers" its environment.
 
-*   **`NavigateToPose`** — `nav2_msgs/action/NavigateToPose`  
-    Used by the nav node to execute random exploration and FSM targets.
+#### 2.1 Semantic Memory: `self.map_hash`
+
+This is the robot's core memory bank. It groups data by **Color** and stores the poses for both the "object" and the "box", along with their current FSM status.
+
+| Memory Component | Description |
+| --- | --- |
+| **`cam_pose`** | Raw coordinates (`x, y, z`) in the local `camera_link` frame. Overwritten continuously. |
+| **`map_pose`** | Global coordinates transformed via TF into the `map` frame. |
+| **`status`** | `notfound`: Incomplete pair (missing object or box).<br>`paired`: Both found! Ready for action.<br>`deferred`: Grasp failed 5 times; temporarily skipped to prioritize other colors.<br>`solved`: Object successfully dropped in the box. Cycle complete. |
+
+#### 2.2 FSM Tracking Variables
+> **Note on State Lifecycle:** To prevent FSM logic collapse caused by "dirty states", these tracking variables are strictly reset to their default values every time the robot transitions to a new state (`transition_to_state`) or completes a full pick-and-place cycle.
 
 
-## 4. Prerequisites
+| Variable | Purpose |
+| --- | --- |
+| **`self.camera_working`** | Boolean flag indicating if the vision frame has been received. |
+| **`self.vision_msg_tick`** | Global counter. Increments +1 for every vision message received (acts as a system clock). |
+| **`self.last_obj_update_tick`** | Records the exact "tick" when the active target object was last seen. |
+| **`self.grasp_attempts`** | Tracks consecutive failed grasp attempts for the current object (max 5). |
+| **`self.arm_action_done`** | Flag indicating the physical arm movement and delays are fully complete. |
 
-*   **ROS 2 Jazzy** (Ubuntu 24.04 recommended)
-*   **Nav2** stack (bringup must be running)
-*   **Python libraries**:
-    *   `ultralytics` (YOLOv8)
-    *   `numpy`, `opencv-python`
-    *   `pyrealsense2` (Intel RealSense SDK)
-    *   `pymycobot` (MyCobot 280)
-*   **Custom Interfaces** (`my_robot_interfaces` must be built first):
-    *   `ObjectTarget.msg`
-    *   `GripperState.msg`
-    *   `CamArmPose.msg`
-*   **Model file:** Place `best.pt` in the installed share directory of `robot_control_system`.
+> **Why are these variables necessary?** <br>In an asynchronous ROS 2 environment, the main control loop, sensor callbacks, and hardware timers operate independently. These tracking variables serve as a **shared blackboard** to synchronize these components without blocking the main thread.<br>Instead of using traditional wall-clock timeouts (like `time.sleep()`, which would freeze the FSM), the controller uses `vision_msg_tick` and `last_obj_update_tick` as an **event-driven clock**. <br>By calculating the difference between them, the robot can dynamically verify grasp/drop success based on visual feedback. Meanwhile, `arm_action_done` and `grasp_attempts` act as critical safety guards—ensuring the FSM strictly waits for physical arm movements to finish, while preventing infinite retry loops.
+
+
+### 3. Finite State Machine (FSM) & Function Logic
+
+The Master Node is driven by a high-frequency timer function (`execute_control_loop` running at 10Hz) that evaluates the current state and triggers transitions.
+
+#### FSM State Breakdown
+
+| FSM State | Triggered Functions | Core Logic & Verification | Transition Condition |
+| --- | --- | --- | --- |
+| **`[0] INIT`** | `check_hardware_readiness()` | **Hardware Probe:** Verifies if the camera heartbeat is active and if Nav/Arm have active subscribers. | If all ready → `[1] SEARCH` |
+| **`[1] SEARCH`** | `execute_control_loop()`<br>`vision_target_callback()` | **Global Patrol:** Enables Nav exploration. Vision callback continually saves `map_pose`. The main loop prioritizes `paired` colors, and only targets `deferred` colors if all others are `solved`. | Found target → `[2] MOVE_TO_OBJECT` |
+| **`[2] MOVE_TO_OBJECT`** | `execute_control_loop()`<br>`move_feedback_callback()` | **Approach:** Publishes the target object's `map` coordinates to Navigation continuously. | Nav goal reached → `[3] GRASP` |
+| **`[3] GRASP`** | `trigger_arm_action()`<br>`_after_gripper_wait()`<br>`execute_control_loop()` | **Pick Sequence:** <br>1. Open gripper & send `cam_pose`.<br>2. Wait 10s (non-blocking).<br>3. Close gripper & reset arm.<br>**Verification:** <br>If object disappears from vision for 5 frames → Success. <br>If still visible → Retry (max 5 times, then mark `deferred`). | Success → `[4] MOVE_TO_BOX`<br>Fail x5 → `[1] SEARCH` |
+| **`[4] MOVE_TO_BOX`** | `execute_control_loop()`<br>`move_feedback_callback()` | **Approach:** Publishes the target box's `map` coordinates to Navigation continuously. | Nav goal reached → `[5] DROP` |
+| **`[5] DROP`** | `trigger_arm_action()`<br>`_after_gripper_wait()`<br>`_final_drop_cleanup()` | **Place Sequence:** <br>1. Send `cam_pose` & wait 10s.<br>2. Open gripper to drop & reset arm.<br>3. Wait 3s, then close gripper.<br>**Verification:** <br>Disappears for 5 frames → Success. <br>Mark `solved`, increment `cycle_count`. | Cycle < 3 → `[1] SEARCH`<br>Cycle = 3 → **Shutdown** |
