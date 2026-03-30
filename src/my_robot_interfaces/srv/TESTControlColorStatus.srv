@@ -1,0 +1,5 @@
+string color      # 目标颜色，例如 "red", "blue"，或者 "all" 表示所有颜色
+string status     # 目标状态，例如 "notfound", "paired", "deferred", "solved", 或 "clear"(用于完全清除坐标数据)
+---
+bool success      # 是否修改成功
+string message    # 反馈信息

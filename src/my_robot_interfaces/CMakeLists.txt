@@ -14,6 +14,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/GripperState.msg"
   "msg/GripperPose.msg"
   "msg/CamArmPose.msg"
+  "srv/TESTControlColorStatus.srv"
 )
 
 ament_export_dependencies(rosidl_default_runtime)

@@ -36,19 +36,24 @@ COMPONENT: Main Controller Node (Master Logic & FSM)
           Marks current pair as 'solved'. Transition -> [1] SEARCH.
 
 --------------------------------------------------------------------------------
-2. PUB/SUB INTERFACE REFERENCE
+2. PUB/SUB/SRV INTERFACE REFERENCE
 --------------------------------------------------------------------------------
-Publishers (Controller -> Actuators):
+Publishers (Controller -> Actuators/Nav):
   - /nav/goal_point       (PointStamped) : Target map coordinates for Nav
   - /nav/cmd_explore      (Bool)         : Enable/Disable random exploration
   - /arm/grasp_pose       (CamArmPose)   : Target camera_link coordinates for Arm
   - /arm/grasp_status     (GripperState) : Control gripper (close/open)
   - /arm/initial_position (GripperState) : Command arm to return to safe/initial pose
+  - /manipulator_feedback (Bool)         : Arm action completion signal to unblock Nav
 
-Subscribers (Sensors -> Controller):
+Subscribers (Sensors/Nav -> Controller):
   - /detected_object      (ObjectTarget) : 3D coordinates from Vision
   - /nav/goal_reached     (Bool)         : Success feedback from Nav
   - /detection_state      (Bool)         : Camera running/health state
+
+Services (Server -> External/Test):
+  - ~/test_update_color_status (UpdateColorStatus) : Manual intervention interface to 
+                                                modify or clear tracked color states
 --------------------------------------------------------------------------------
 3. OUTPUT CONTROL MATRIX (Pure Boolean)
 --------------------------------------------------------------------------------
@@ -74,6 +79,7 @@ import tf2_geometry_msgs
 
 # Custom interfaces
 from my_robot_interfaces.msg import ObjectTarget, GripperState, CamArmPose
+from my_robot_interfaces.srv import TESTControlColorStatus
 
 # ==============================================================================
 # STATE MACHINE CONSTANTS
@@ -123,11 +129,20 @@ class RobotControlNode(Node):
         self.pub_arm_pose    = self.create_publisher(CamArmPose, '/arm/grasp_pose', 10)
         self.pub_arm_grip    = self.create_publisher(GripperState, '/arm/grasp_status', 10)
         self.pub_arm_init    = self.create_publisher(GripperState, '/arm/initial_position', 10)
+        self.pub_manip_fb    = self.create_publisher(Bool, '/manipulator_feedback', 10)
 
         # Subscribers
         self.sub_vision_state = self.create_subscription(Bool, '/detection_state', self.vision_state_callback, 10)
         self.sub_vision_target = self.create_subscription(ObjectTarget, '/detected_object', self.vision_target_callback, 10)
         self.sub_move_fb       = self.create_subscription(Bool, '/nav/goal_reached', self.move_feedback_callback, 10)
+
+        # Service Servers
+        self.srv_test_color_status = self.create_service(
+            TESTControlColorStatus, 
+            '~/test_update_color_status', 
+            self.test_update_color_status_callback
+        )
+        self.get_logger().info('Test Service "~/test_update_color_status" is ready.')
 
         # Output Control Matrix
         self.control_matrix = {
@@ -144,6 +159,69 @@ class RobotControlNode(Node):
         self.control_loop_timer = self.create_timer(0.1, self.execute_control_loop)
 
         self.get_logger().info('Master Control Node Initialized. Entering INIT state.')
+
+
+    # Test Service Callback for Dynamic Color Status Updates
+    # ros2 service call /robot_control_node/update_color_status my_robot_interfaces/srv/TESTControlColorStatus "{color: '<color>', status: '<status>'}"
+    def test_update_color_status_callback(self, request, response):
+        """
+        Handles requests to update the status of colors in the state machine.
+        Supported operations:
+        - Status update: Set color to 'paired', 'solved', 'deferred', 'notfound'.
+        - Data clearance: Use 'clear' to completely remove the color's tracking data.
+        """
+        req_color = request.color.lower()
+        req_status = request.status.lower()
+        target_colors = []
+        # Support "all" keyword to apply changes to all currently tracked colors
+        if req_color == "all":
+            target_colors = list(self.map_hash.keys())
+            if not target_colors:
+                response.success = False
+                response.message = "No colors found in map_hash to update."
+                return response
+        else:
+            # Only process if the color is already being tracked
+            if req_color in self.map_hash:
+                target_colors = [req_color]
+            else:
+                response.success = False
+                response.message = f"Color '{req_color}' is not currently tracked."
+                return response
+        updated_count = 0
+        skipped_count = 0
+        for color in target_colors:
+            # SAFETY LOCK: Prevent modifying the currently active target while 
+            # the robot is actively navigating or manipulating it.
+            if color == self.active_target_color and self.current_state != STATE_SEARCH:
+                self.get_logger().warn(
+                    f"Action rejected: Cannot modify active target '{color}' "
+                    f"while FSM is in state {self.current_state}."
+                )
+                skipped_count += 1
+                continue # Skip this color to protect the physical execution flow
+            if req_status == 'clear':
+                # Completely remove the color's data from the tracking dictionary
+                del self.map_hash[color]
+                updated_count += 1
+            else:
+                # Update the status of the existing color
+                self.map_hash[color]['status'] = req_status
+                # CRITICAL: Wipe old coordinates to prevent immediate false re-pairing
+                if req_status == 'notfound':
+                    self.map_hash[color]['object'] = {}
+                    self.map_hash[color]['box'] = {}
+                updated_count += 1
+        # Format the response message based on what happened
+        response.success = (updated_count > 0)
+        msg_parts = []
+        if updated_count > 0:
+            msg_parts.append(f"Applied '{req_status}' to {updated_count} color(s).")
+        if skipped_count > 0:
+            msg_parts.append(f"Skipped {skipped_count} active color(s) for safety.")
+        response.message = " ".join(msg_parts)
+        self.get_logger().info(f"Service Call Result: {response.message}")
+        return response
 
     def vision_state_callback(self, msg: Bool):
         """
@@ -199,6 +277,7 @@ class RobotControlNode(Node):
                 if miss_count >= self.grasp_miss_threshold:
                     self.get_logger().info("GRASP SUCCESS (Object absent).")
                     self.arm_action_done = False
+                    self.pub_manip_fb.publish(Bool(data=True))
                     self.transition_to_state(STATE_MOVE_TO_BOX, "Heading to Target Box.")
                 
                 elif ticks_since_check > self.grasp_miss_threshold * 2:
@@ -209,6 +288,7 @@ class RobotControlNode(Node):
                         self.get_logger().info("GRASP FAILED 5 TIMES. Marking 'deferred'.")
                         if self.active_target_color in self.map_hash:
                             self.map_hash[self.active_target_color]['status'] = 'deferred'
+                        self.pub_manip_fb.publish(Bool(data=True))
                         self.transition_to_state(STATE_SEARCH, "Resuming Search.")
                     else:
                         self.get_logger().info(f"GRASP FAILED. Retrying (Attempt {self.grasp_attempts+1}/5)")
@@ -223,6 +303,7 @@ class RobotControlNode(Node):
                 if miss_count >= self.drop_miss_threshold:
                     self.get_logger().info("DROP SUCCESS.")
                     self.arm_action_done = False
+                    self.pub_manip_fb.publish(Bool(data=True))
                     
                     if self.active_target_color in self.map_hash:
                         self.map_hash[self.active_target_color]['status'] = 'solved'
