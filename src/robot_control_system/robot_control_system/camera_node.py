@@ -1,90 +1,63 @@
 import rclpy
 from rclpy.node import Node
-
 from std_msgs.msg import Bool
 from geometry_msgs.msg import PoseStamped
+from sensor_msgs.msg import Image
 from my_robot_interfaces.msg import ObjectTarget
 
-
-import pyrealsense2 as rs
 import numpy as np
 import cv2
+from cv_bridge import CvBridge
+import message_filters
 from ultralytics import YOLO
 import os
 from ament_index_python.packages import get_package_share_directory
+import math
 
-##ADD Only then: add TF (camera_link → base_link) 
-
-class VisionNode(Node):
+class VisionNodeSim(Node):
     def __init__(self):
-        super().__init__('vision_node')
+        super().__init__('vision_node_sim')
 
-        # ----------------------------
         # Publishers
-        # ----------------------------
         self.pub_detected = self.create_publisher(ObjectTarget, '/detected_object', 10)
         self.pub_state = self.create_publisher(Bool, '/detection_state', 10)
 
-
-        # ----------------------------
         # Load YOLO model
-        # ----------------------------
         pkg_path = get_package_share_directory('robot_control_system')
         model_path = os.path.join(pkg_path, 'best.pt')
-
         self.get_logger().info(f"Loading model from: {model_path}")
         self.model = YOLO(model_path)
         self.class_names = self.model.names
-
-        # self.model = YOLO("best.pt")
         self.get_logger().info("YOLO model loaded")
 
-        # ----------------------------
-        # RealSense setup
-        # ----------------------------
-        self.pipeline = rs.pipeline()
-        config = rs.config()
-        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-        self.pipeline.start(config)
+        self.bridge = CvBridge()
 
-        self.align = rs.align(rs.stream.color)
+        # Camera intrinsics calculated from your Xacro file 
+        self.fx = 336.8
+        self.fy = 336.8
+        self.cx = 320.0
+        self.cy = 240.0
 
-        # Camera intrinsics
-        profile = self.pipeline.get_active_profile()
-        color_stream = profile.get_stream(rs.stream.color)
-        intr = color_stream.as_video_stream_profile().get_intrinsics()
+        # ROS 2 Subscribers (Syncing Color and Depth)
+        self.color_sub = message_filters.Subscriber(self, Image, '/d435/color/image_raw')
+        self.depth_sub = message_filters.Subscriber(self, Image, '/d435/depth/image_raw')
+        
+        self.ts = message_filters.ApproximateTimeSynchronizer(
+            [self.color_sub, self.depth_sub], queue_size=10, slop=0.1
+        )
+        self.ts.registerCallback(self.image_callback)
+        self.get_logger().info("Simulation Vision Node Initialized. Waiting for Gazebo images...")
 
-        self.fx = intr.fx
-        self.fy = intr.fy
-        self.cx = intr.ppx
-        self.cy = intr.ppy
-
-        self.get_logger().info("RealSense initialized")
-
-        # ----------------------------
-        # Timer (10 Hz)
-        # ----------------------------
-        self.timer = self.create_timer(0.1, self.main_loop)
-
-    def main_loop(self):
-        # ----------------------------
-        # Get frames
-        # ----------------------------
-        frames = self.pipeline.wait_for_frames()
-        frames = self.align.process(frames)
-
-        color_frame = frames.get_color_frame()
-        depth_frame = frames.get_depth_frame()
-
-        if not color_frame or not depth_frame:
+    def image_callback(self, color_msg, depth_msg):
+        # Convert ROS Image messages to OpenCV format
+        try:
+            color_image = self.bridge.imgmsg_to_cv2(color_msg, "bgr8")
+            depth_image = self.bridge.imgmsg_to_cv2(depth_msg, "32FC1") 
+        except Exception as e:
+            self.get_logger().error(f"CV Bridge error: {e}")
             return
 
-        color_image = np.asanyarray(color_frame.get_data())
-
-        # ----------------------------
         # Run YOLO
-        # ----------------------------
         results = self.model(color_image, conf=0.5, verbose=False)
         state_msg = Bool()
 
@@ -96,56 +69,44 @@ class VisionNode(Node):
         state_msg.data = True
         self.pub_state.publish(state_msg)
 
-
-
-        # ----------------------------
-        # Detected Objects List
-        # ----------------------------        
-
         boxes = results[0].boxes
-
-        # Sort by confidence (highest first)
         confidences = boxes.conf.cpu().numpy()
         sorted_indices = np.argsort(-confidences)
-
         top_k = min(3, len(sorted_indices))
 
-
         for i in range(top_k):
-
             box = boxes[sorted_indices[i]]
-
             cls_id = int(box.cls[0])
             object_name_full = self.class_names[cls_id]
 
-            # Determine type
-            if "box" in object_name_full:
-                name = "box"
-            else:
-                name = "object"
+            name = "box" if "box" in object_name_full else "object"
 
-            # Extract color
-            if "red" in object_name_full:
-                color = "red"
-            elif "yellow" in object_name_full:
-                color = "yellow"
-            elif "purple" in object_name_full:
-                color = "purple"
-            else:
-                color = "unknown"
+            if "red" in object_name_full: color = "red"
+            elif "yellow" in object_name_full: color = "yellow"
+            elif "purple" in object_name_full: color = "purple"
+            else: color = "unknown"
 
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             u = int((x1 + x2) / 2)
             v = int((y1 + y2) / 2)
 
-            depth = depth_frame.get_distance(u, v)
-
-            if depth <= 0.0:
+            # Get depth in meters (handle potential NaNs from simulation)
+            depth = depth_image[v, u]
+            
+            # ==========================================================
+            # [MODIFICATION]: "近视眼" 距离过滤
+            # 强行丢弃大于 1.5 米的检测结果。
+            # 这能完美解决仿真中因为没有纹理导致的远距离 Box/Object 误识别问题。
+            # 小车必须开到 1.5 米以内，视觉节点才会真正把坐标发给 FSM 大脑。
+            # ==========================================================
+            max_valid_distance = 1.5 
+            
+            if math.isnan(depth) or depth <= 0.0 or depth > max_valid_distance:
                 continue
 
             X = (u - self.cx) / self.fx * depth
             Y = (v - self.cy) / self.fy * depth
-            Z = depth
+            Z = float(depth)
 
             msg = ObjectTarget()
             msg.name = name
@@ -156,16 +117,9 @@ class VisionNode(Node):
 
             self.pub_detected.publish(msg)
 
-     
-
-    def destroy_node(self):
-        self.pipeline.stop()
-        super().destroy_node()
-
-
 def main():
     rclpy.init()
-    node = VisionNode()
+    node = VisionNodeSim()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
@@ -173,7 +127,6 @@ def main():
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
