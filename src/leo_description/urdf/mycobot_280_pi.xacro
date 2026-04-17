@@ -1,0 +1,157 @@
+<?xml version="1.1"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="mycobot_280" params="parent prefix *origin">
+
+    <xacro:macro name="cylinder_inertial" params="mass radius length">
+      <inertial>
+        <mass value="${mass * 10}"/>
+        <inertia 
+          ixx="${(mass * 10) * (3 * radius * radius + length * length) / 12}" ixy="0.0" ixz="0.0"
+          iyy="${(mass * 10) * (3 * radius * radius + length * length) / 12}" iyz="0.0"
+          izz="${(mass * 10) * radius * radius / 2}" />
+      </inertial>
+    </xacro:macro>
+
+    <joint name="${prefix}base_to_parent" type="fixed">
+      <xacro:insert_block name="origin" />
+      <parent link="${parent}"/>
+      <child link="${prefix}g_base"/>
+    </joint>
+
+    <link name="${prefix}g_base">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/G_base.dae"/></geometry>
+        <origin xyz="0.0 0 -0.03" rpy="0 0 1.5708"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.5" radius="0.04" length="0.05"/>
+    </link>
+
+    <link name="${prefix}joint1">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint1_pi.dae"/></geometry>
+        <origin xyz="0.0 0 0" rpy="0 0 0"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.2" radius="0.03" length="0.06"/>
+    </link>
+
+    <link name="${prefix}joint2">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint2.dae"/></geometry>
+        <origin xyz="0.0 0 -0.06096" rpy="0 0 -1.5708"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.15" radius="0.02" length="0.1"/>
+    </link>
+
+    <link name="${prefix}joint3">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint3.dae"/></geometry>
+        <origin xyz="0.0 0 0.03256" rpy="0 -1.5708 0"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.15" radius="0.02" length="0.1"/>
+    </link>
+
+    <link name="${prefix}joint4">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint4.dae"/></geometry>
+        <origin xyz="0.0 0 0.03056" rpy="0 -1.5708 0"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.1" radius="0.02" length="0.05"/>
+    </link>
+
+    <link name="${prefix}joint5">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint5.dae"/></geometry>
+        <origin xyz="0.0 -0.001 -0.0345" rpy="0 -1.5708 1.5708"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.1" radius="0.02" length="0.05"/>
+    </link>
+
+    <link name="${prefix}joint6">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint6.dae"/></geometry>
+        <origin xyz="0 0.00 -0.038" rpy="0 0 0"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.1" radius="0.02" length="0.04"/>
+    </link>
+
+    <link name="${prefix}joint6_flange">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint7.dae"/></geometry>
+        <origin xyz="0.0 0 -0.012" rpy="0 0 0"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.05" radius="0.015" length="0.01"/>
+    </link>
+
+    <link name="${prefix}gripper_base">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/adaptive_gripper/gripper_base.dae"/></geometry>
+        <origin xyz="0.0 0 -0.012" rpy="0 0 0"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.08" radius="0.03" length="0.03"/>
+    </link>
+
+    <link name="${prefix}gripper_left3">
+      <visual>
+        <geometry><mesh filename="package://leo_description/models/adaptive_gripper/gripper_left3.dae"/></geometry>
+        <origin xyz="0.012 0.0025 -0.012" rpy="0 0 0"/>
+      </visual>
+      <xacro:cylinder_inertial mass="0.02" radius="0.01" length="0.03"/>
+    </link>
+
+    <joint name="${prefix}g_base_to_joint1" type="fixed">
+      <parent link="${prefix}g_base"/>
+      <child link="${prefix}joint1"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>  
+    </joint>
+
+    <joint name="${prefix}joint2_to_joint1" type="fixed">
+      <origin xyz="0 0 0.13956" rpy="0 0 0"/>  
+      <parent link="${prefix}joint1"/>
+      <child link="${prefix}joint2"/>
+    </joint>
+
+    <joint name="${prefix}joint3_to_joint2" type="fixed">
+      <origin xyz="0 0 -0.001" rpy="0 1.5708 -1.5708"/>  
+      <parent link="${prefix}joint2"/>
+      <child link="${prefix}joint3"/>
+    </joint>
+
+    <joint name="${prefix}joint4_to_joint3" type="fixed">
+      <parent link="${prefix}joint3"/>
+      <child link="${prefix}joint4"/>
+      <origin xyz="-0.1104 0 0" rpy="0 0 0"/>  
+    </joint>
+
+    <joint name="${prefix}joint5_to_joint4" type="fixed">
+      <parent link="${prefix}joint4"/>
+      <child link="${prefix}joint5"/>
+      <origin xyz="-0.096 0 0.06462" rpy="0 0 -1.5708"/>  
+    </joint>
+
+    <joint name="${prefix}joint6_to_joint5" type="fixed">
+      <parent link="${prefix}joint5"/>
+      <child link="${prefix}joint6"/>
+      <origin xyz="0 -0.07318 -0.001" rpy="1.5708 -1.5708 0"/>  
+    </joint>
+
+    <joint name="${prefix}joint6output_to_joint6" type="fixed">
+      <parent link="${prefix}joint6"/>
+      <child link="${prefix}joint6_flange"/>
+      <origin xyz="0 0.0456 0" rpy="-1.5708 0 0"/>  
+    </joint>
+
+    <joint name="${prefix}joint6output_to_gripper_base" type="fixed">
+      <parent link="${prefix}joint6_flange"/>
+      <child link="${prefix}gripper_base"/>
+      <origin xyz="0 0 0.034" rpy="1.579 0 0"/>  
+    </joint>
+
+    <joint name="${prefix}gripper_controller" type="fixed">
+      <parent link="${prefix}gripper_base"/>
+      <child link="${prefix}gripper_left3"/>
+      <origin xyz="-0.012 0.005 0" rpy="0 0 0"/> 
+    </joint>
+
+  </xacro:macro>
+</robot>

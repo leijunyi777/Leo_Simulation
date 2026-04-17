@@ -42,3 +42,34 @@
   ros_type_name: "sensor_msgs/msg/Imu"
   gz_type_name: "gz.msgs.IMU"
   direction: GZ_TO_ROS
+
+
+# ====== RealSense D435 RGB 彩色图像 ======
+- ros_topic_name: "/d435/color/image_raw"
+  gz_topic_name: "/d435/image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+# ====== RealSense D435 深度图像 ======
+- ros_topic_name: "/d435/depth/image_raw"
+  gz_topic_name: "/d435/depth_image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+# ====== RealSense D435 3D 点云 ======
+- ros_topic_name: "/d435/depth/color/points"
+  gz_topic_name: "/d435/points"
+  ros_type_name: "sensor_msgs/msg/PointCloud2"
+  gz_type_name: "gz.msgs.PointCloudPacked"
+  direction: GZ_TO_ROS
+
+
+# ====== 关节状态 (Gazebo 物理引擎 -> ROS 2) ======
+# 将底盘车轮和机械臂的关节角度同步给 robot_state_publisher，用于发布完整的 TF 树
+- ros_topic_name: "/joint_states"
+  gz_topic_name: "/world/testing_world/model/leo_sim/joint_state"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS

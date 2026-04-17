@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
+  <xacro:include filename="$(find leo_description)/urdf/d435.urdf.xacro" />
+  <xacro:include filename="$(find leo_description)/urdf/mycobot_280_pi.xacro" />
+  
   <xacro:macro name="leo" 
                params="default_antenna:=true
                        rockers_fixed:=true
@@ -10,6 +13,7 @@
                        imu_translation:='0.0628 -0.0314 -0.0393'
                        mecanum_wheels:=false">
 
+    
     <xacro:macro name="rocker_link" params="name">
       <link name="${link_prefix}rocker_${name}_link">
         <inertial>
@@ -303,6 +307,14 @@
       <child link="${link_prefix}laser"/>
       <origin xyz="0.02313 0.0 -0.138" rpy="0.0 0.0 3.14"/>
     </joint>
+
+    <xacro:sensor_d435 parent="${link_prefix}base_link" name="${link_prefix}d435">
+      <origin xyz="0.17375 0.0 0.09568" rpy="0 0.34906 0"/>
+    </xacro:sensor_d435>
+
+    <xacro:mycobot_280 parent="${link_prefix}base_link" prefix="arm_">
+      <origin xyz="0.0995 0.0 0.032" rpy="0 0 0"/> 
+    </xacro:mycobot_280>
 
   </xacro:macro>
 

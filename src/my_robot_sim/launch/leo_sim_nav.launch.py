@@ -1,6 +1,6 @@
 import os
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, TimerAction, ExecuteProcess
+from launch.actions import IncludeLaunchDescription, TimerAction, ExecuteProcess, AppendEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
@@ -13,6 +13,11 @@ def generate_launch_description():
     # 获取两个不同包的路径
     sim_pkg_dir = get_package_share_directory('my_robot_sim')
     leo_pkg_dir = get_package_share_directory('leo_description') # 获取 Leo 小车的包路径
+
+    set_model_path = AppendEnvironmentVariable(
+        'GZ_SIM_RESOURCE_PATH', 
+        os.path.join(leo_pkg_dir, '..') 
+    )
 
     # 配置文件与模型路径
     #os.path.join: 将多个路径组合成一个路径，用于获取文件路径
@@ -58,7 +63,20 @@ def generate_launch_description():
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
-        arguments=['-world', 'testing_world','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.02'],
+        arguments=[
+            '-world', 'testing_world',
+            '-topic', 'robot_description', 
+            '-name', 'leo_sim', 
+            '-z', '0.02',
+            # ▼▼▼ 修改部分开始：新增机械臂初始关节角度 (站立锁死状态) ▼▼▼
+            '-J', 'arm_joint2_to_joint1', '0.0',
+            '-J', 'arm_joint3_to_joint2', '0.0',
+            '-J', 'arm_joint4_to_joint3', '0.0',
+            '-J', 'arm_joint5_to_joint4', '0.0',
+            '-J', 'arm_joint6_to_joint5', '0.0',
+            '-J', 'arm_joint6output_to_joint6', '0.0'
+            # ▲▲▲ 修改部分结束 ▲▲▲
+        ],
         output='screen'
     )
 
@@ -178,6 +196,7 @@ def generate_launch_description():
 
  
     return LaunchDescription([
+        set_model_path,
         gz_sim,
         robot_state_publisher,
         joint_state_publisher,
@@ -186,7 +205,7 @@ def generate_launch_description():
         laser_filter_node,
         delayed_spawn,
         delayed_kickstart,
-        #teleop_node,
+        teleop_node,
         rviz2_node,
         slam_toolbox_node,
         delayed_nav2,
