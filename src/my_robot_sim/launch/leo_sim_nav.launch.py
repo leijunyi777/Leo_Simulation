@@ -205,7 +205,7 @@ def generate_launch_description():
         laser_filter_node,
         delayed_spawn,
         delayed_kickstart,
-        teleop_node,
+        #teleop_node,
         rviz2_node,
         slam_toolbox_node,
         delayed_nav2,
