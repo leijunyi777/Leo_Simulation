@@ -7,7 +7,6 @@ from my_robot_interfaces.msg import ObjectTarget
 
 import numpy as np
 import cv2
-from cv_bridge import CvBridge
 import message_filters
 from ultralytics import YOLO
 import os
@@ -30,7 +29,7 @@ class VisionNodeSim(Node):
         self.class_names = self.model.names
         self.get_logger().info("YOLO model loaded")
 
-        self.bridge = CvBridge()
+        # 【已移除】self.bridge = CvBridge()
 
         # Camera intrinsics calculated from your Xacro file 
         self.fx = 336.8
@@ -49,13 +48,26 @@ class VisionNodeSim(Node):
         self.get_logger().info("Simulation Vision Node Initialized. Waiting for Gazebo images...")
 
     def image_callback(self, color_msg, depth_msg):
-        # Convert ROS Image messages to OpenCV format
+        # ==========================================================
+        # 【核心修改】：使用纯 Numpy 替代 cv_bridge 进行图像解析
+        # ==========================================================
         try:
-            color_image = self.bridge.imgmsg_to_cv2(color_msg, "bgr8")
-            depth_image = self.bridge.imgmsg_to_cv2(depth_msg, "32FC1") 
+            # 1. 解析彩色图像
+            # 从字节流中读取 8 位无符号整数，并重塑为 (高度, 宽度, 通道数) 的矩阵
+            color_image = np.frombuffer(color_msg.data, dtype=np.uint8).reshape(color_msg.height, color_msg.width, -1)
+            
+            # Gazebo 通常输出 rgb8 格式，而 OpenCV/YOLO 默认使用 BGR 格式，所以需要转换一下通道顺序
+            if color_msg.encoding == 'rgb8':
+                color_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2BGR)
+
+            # 2. 解析深度图像
+            # 深度图通常是 32FC1 格式（32位浮点数 单通道），直接读取为 float32 并重塑
+            depth_image = np.frombuffer(depth_msg.data, dtype=np.float32).reshape(depth_msg.height, depth_msg.width)
+
         except Exception as e:
-            self.get_logger().error(f"CV Bridge error: {e}")
+            self.get_logger().error(f"Numpy Image conversion error: {e}")
             return
+        # ==========================================================
 
         # Run YOLO
         results = self.model(color_image, conf=0.5, verbose=False)
@@ -94,7 +106,7 @@ class VisionNodeSim(Node):
             depth = depth_image[v, u]
             
             # ==========================================================
-            # [MODIFICATION]: "近视眼" 距离过滤
+            # "近视眼" 距离过滤
             # 强行丢弃大于 1.5 米的检测结果。
             # 这能完美解决仿真中因为没有纹理导致的远距离 Box/Object 误识别问题。
             # 小车必须开到 1.5 米以内，视觉节点才会真正把坐标发给 FSM 大脑。
