@@ -71,7 +71,7 @@ Services (Server -> External/Test):
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 from geometry_msgs.msg import PointStamped
 
 from tf2_ros import Buffer, TransformListener, TransformException
@@ -134,6 +134,7 @@ class RobotControlNode(Node):
         self.pub_arm_grip    = self.create_publisher(GripperState, '/arm/grasp_status', 10)
         self.pub_arm_init    = self.create_publisher(GripperState, '/arm/initial_position', 10)
         self.pub_manip_fb    = self.create_publisher(Bool, '/manipulator_feedback', 10)
+        self.pub_active_color = self.create_publisher(String, '/current_task_color', 10)
 
         # Subscribers
         self.sub_vision_state = self.create_subscription(Bool, '/detection_state', self.vision_state_callback, 10)
@@ -269,6 +270,9 @@ class RobotControlNode(Node):
         publishes navigation targets, and handles event-driven verification for grasp/drop success.
         """
         self.control_loop_tick += 1
+        color_msg = String()
+        color_msg.data = str(self.active_target_color)
+        self.pub_active_color.publish(color_msg)
         if self.current_state == STATE_SEARCH:
             target_color = None
             has_paired = False
@@ -504,7 +508,7 @@ class RobotControlNode(Node):
             self.init_timer.cancel()
             return
 
-        camera_ready = self.camera_working 
+        camera_ready = self.count_publishers('/detection_state') > 0 
         nav_ready    = self.count_subscribers('/nav/goal_point') > 0
         arm_ready    = self.count_subscribers('/arm/grasp_pose') > 0
 

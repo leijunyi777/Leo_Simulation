@@ -86,48 +86,76 @@ class VisionNodeSim(Node):
         sorted_indices = np.argsort(-confidences)
         top_k = min(3, len(sorted_indices))
 
-        for i in range(top_k):
+for i in range(top_k):
             box = boxes[sorted_indices[i]]
+            
+            # --- 1. 获取基础属性 ---
             cls_id = int(box.cls[0])
             object_name_full = self.class_names[cls_id]
-
-            name = "box" if "box" in object_name_full else "object"
-
-            if "red" in object_name_full: color = "red"
-            elif "yellow" in object_name_full: color = "yellow"
-            elif "purple" in object_name_full: color = "purple"
-            else: color = "unknown"
-
+            
+            # 提取颜色
+            color = "unknown"
+            for c in ["red", "yellow", "purple"]:
+                if c in object_name_full:
+                    color = c
+                    break
+            
+            # --- 2. 采样与深度计算 ---
             x1, y1, x2, y2 = map(int, box.xyxy[0])
-            u = int((x1 + x2) / 2)
-            v = int((y1 + y2) / 2)
+            pixel_width = x2 - x1
+            pixel_height = y2 - y1
 
-            # Get depth in meters (handle potential NaNs from simulation)
-            depth = depth_image[v, u]
-            
-            # ==========================================================
-            # "近视眼" 距离过滤
-            # 强行丢弃大于 1.5 米的检测结果。
-            # 这能完美解决仿真中因为没有纹理导致的远距离 Box/Object 误识别问题。
-            # 小车必须开到 1.5 米以内，视觉节点才会真正把坐标发给 FSM 大脑。
-            # ==========================================================
-            max_valid_distance = 1.5 
-            
-            if math.isnan(depth) or depth <= 0.0 or depth > max_valid_distance:
+            u = int((x1 + x2) / 2)
+            v = int(y2 - pixel_height * 0.2)
+
+            if not (0 <= u < depth_image.shape[1] and 0 <= v < depth_image.shape[0]):
                 continue
 
-            X = (u - self.cx) / self.fx * depth
-            Y = (v - self.cy) / self.fy * depth
-            Z = float(depth)
+            # ROI 中位数滤波 (5x5 区域)
+            roi = 2 
+            v_min, v_max = max(0, v - roi), min(depth_image.shape[0], v + roi)
+            u_min, u_max = max(0, u - roi), min(depth_image.shape[1], u + roi)
+            depth_roi = depth_image[v_min:v_max, u_min:u_max]
+            
+            valid_mask = (depth_roi > 0) & (~np.isnan(depth_roi)) & (~np.isinf(depth_roi))
+            if not np.any(valid_mask):
+                continue
+            
+            depth_surface = float(np.median(depth_roi[valid_mask]))
+
+            # --- [新增] 距离过滤范围优化 ---
+            # 0.2m以内是深度相机盲区，数据不可信；2.5m以上太远不处理
+            if depth_surface < 0.2 or depth_surface > 2.5:
+                continue
+
+            # --- 3. 物理分类与偏移补偿 (增强鲁棒性) ---
+            # 通过内参将像素尺寸还原为物理尺寸 (米)
+            real_width = (pixel_width / self.fx) * depth_surface
+            real_height = (pixel_height / self.fy) * depth_surface
+            
+            # [策略升级] 双判据校验：Box 不仅宽，而且高度也应该显著大于 Object
+            # 只有宽度 > 0.12m 且 高度 > 0.10m 时，才判定为 Box
+            if real_width > 0.12 and real_height > 0.10:
+                name = "box"
+                depth_offset = 0.105 # 21cm 盒子的半径
+            else:
+                name = "object"
+                depth_offset = 0.025 # 5cm 物块的半径
+
+            # --- 4. 坐标投影与发布 ---
+            # 计算 3D 坐标 (相对于相机 d435_link)
+            X = (u - self.cx) / self.fx * depth_surface
+            Y = (v - self.cy) / self.fy * depth_surface
+            Z = depth_surface + depth_offset
 
             msg = ObjectTarget()
             msg.name = name
             msg.color = color
-            msg.x = float(X)
-            msg.y = float(Y)
-            msg.z = float(Z)
-
+            msg.x, msg.y, msg.z = float(X), float(Y), float(Z)
+            
+            # 发布识别结果
             self.pub_detected.publish(msg)
+
 
 def main():
     rclpy.init()
