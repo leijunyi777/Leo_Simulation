@@ -47,6 +47,9 @@ class VisionNodeSim(Node):
         self.ts.registerCallback(self.image_callback)
         self.get_logger().info("Simulation Vision Node Initialized. Waiting for Gazebo images...")
 
+        self.timer = self.create_timer(0.1, self.timer_callback)
+        self.latest_msg = None  # 新增：用来存储最新识别结果
+
     def image_callback(self, color_msg, depth_msg):
         # ==========================================================
         # 【核心修改】：使用纯 Numpy 替代 cv_bridge 进行图像解析
@@ -152,9 +155,15 @@ class VisionNodeSim(Node):
             msg.name = name
             msg.color = color
             msg.x, msg.y, msg.z = float(X), float(Y), float(Z)
+
+            self.latest_msg = msg
             
             # 发布识别结果
-            self.pub_detected.publish(msg)
+            #self.pub_detected.publish(msg)
+
+    def timer_callback(self):
+        if self.latest_msg is not None:
+            self.pub_detected.publish(self.latest_msg)
 
 
 def main():

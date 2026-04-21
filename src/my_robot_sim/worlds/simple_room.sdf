@@ -11,8 +11,13 @@
       <render_engine>ogre2</render_engine>
     </plugin>
 
+    <physics type="ode">
+      <max_step_size>0.005</max_step_size>
+      <real_time_update_rate>200</real_time_update_rate>
+    </physics>
+
     <light type="directional" name="sun">
-      <cast_shadows>true</cast_shadows>
+      <cast_shadows>false</cast_shadows>
       <pose>0 0 10 0 0 0</pose>
       <diffuse>0.8 0.8 0.8 1</diffuse>
       <specular>0.2 0.2 0.2 1</specular>
@@ -73,26 +78,89 @@
 
     <model name="obstacle_1">
       <static>true</static> 
-      <pose>1.0 1.0 0.11 0 0 0</pose> <link name="link">
-        <collision name="collision"><geometry><box><size>0.22 0.22 0.22</size></box></geometry></collision>
+      <pose>0.895 1.105 0 1.5708 0 0</pose> 
+     <link name="link">
+        <collision name="collision">
+          <geometry>
+            <mesh>
+              <uri>model://obstacle_box/meshes/box.stl</uri>
+              <scale>0.001 0.001 0.001</scale> 
+            </mesh>
+          </geometry>
+        </collision>
         <visual name="visual">
-          <geometry><box><size>0.22 0.22 0.22</size></box></geometry>
-          <material><ambient>0 0 1 1</ambient><diffuse>0 0 1 1</diffuse></material>
+          <geometry>
+            <mesh>
+              <uri>model://obstacle_box/meshes/box.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+          <material>
+            <ambient>0.8 0 0 0.9</ambient>
+            <diffuse>0.8 0 0 0.9</diffuse>
+            <specular>0.6 0.6 0.6 1</specular>
+          </material>
         </visual>
       </link>
     </model>
 
     <model name="obstacle_2">
-      <static>true</static>
-      <pose>-1.0 -0.5 0.11 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>0.22 0.22 0.22</size></box></geometry></collision>
+      <static>true</static> 
+      <pose>0.895 -0.895 0 1.5708 0 0</pose> 
+     <link name="link">
+        <collision name="collision">
+          <geometry>
+            <mesh>
+              <uri>model://obstacle_box/meshes/box.stl</uri>
+              <scale>0.001 0.001 0.001</scale> 
+            </mesh>
+          </geometry>
+        </collision>
         <visual name="visual">
-          <geometry><box><size>0.22 0.22 0.22</size></box></geometry>
-          <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material>
+          <geometry>
+            <mesh>
+              <uri>model://obstacle_box/meshes/box.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0 0.9</ambient>
+            <diffuse>0.8 0.8 0 0.9</diffuse>
+            <specular>0.6 0.6 0.6 1</specular>
+          </material>
         </visual>
       </link>
     </model>
+
+    <model name="obstacle_3">
+      <static>true</static> 
+      <pose>-1.105 -0.895 0 1.5708 0 0</pose> 
+     <link name="link">
+        <collision name="collision">
+          <geometry>
+            <mesh>
+              <uri>model://obstacle_box/meshes/box.stl</uri>
+              <scale>0.001 0.001 0.001</scale> 
+            </mesh>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <mesh>
+              <uri>model://obstacle_box/meshes/box.stl</uri>
+              <scale>0.001 0.001 0.001</scale>
+            </mesh>
+          </geometry>
+          <material>
+            <ambient>0.5 0 0.5 0.9</ambient>
+            <diffuse>0.5 0 0.5 0.9</diffuse>
+            <specular>0.6 0.6 0.6 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    
 
   </world>
 </sdf>

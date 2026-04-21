@@ -13,25 +13,29 @@ def generate_launch_description():
     # 获取两个不同包的路径
     sim_pkg_dir = get_package_share_directory('my_robot_sim')
     leo_pkg_dir = get_package_share_directory('leo_description') # 获取 Leo 小车的包路径
-
     # 配置文件与模型路径
-    # os.path.join: 将多个路径组合成一个路径，用于获取文件路径
+    #os.path.join: 将多个路径组合成一个路径，用于获取文件路径
+
+    #模拟仿真配置文件
     urdf_file = os.path.join(leo_pkg_dir, 'urdf', 'leo_sim.urdf.xacro') 
-    # 【修改点 1】：加载新世界的 sdf 文件
-    world_file = os.path.join(sim_pkg_dir, 'worlds', 'simple.sdf')   
+    world_file = os.path.join(sim_pkg_dir, 'worlds', 'simple_room.sdf')   
     bridge_config = os.path.join(sim_pkg_dir, 'config', 'bridge.yaml')
-    slam_params_file = os.path.join(sim_pkg_dir, 'config', 'mapper_params_online_async.yaml')
-    explore_params_file = os.path.join(sim_pkg_dir, 'config', 'explore_params.yaml') # 自动探索参数文件路径
-    rviz_config_file = os.path.join(sim_pkg_dir, 'rviz', 'sim.rviz')
-    ekf_config_path = os.path.join(sim_pkg_dir, 'config', 'ekf.yaml')
-    # 获取参数文件和行为树文件的绝对路径
-    nav2_params_file = os.path.join(sim_pkg_dir, 'config', 'nav2_params.yaml') # Nav2 参数文件路径
-    custom_bt_path = os.path.join(sim_pkg_dir, 'config', 'navigate_to_pose_w_replanning_and_recovery.xml')
-    
+
     # ================= 使用 Command 动态解析 xacro =================
     # 以前是直接 read() 文本，现在需要调用系统命令 'xacro' 转换它
     robot_desc = Command(['xacro ', urdf_file])
 
+    #slam定位配置文件
+    slam_params_file = os.path.join(sim_pkg_dir, 'config', 'mapper_params_online_async.yaml')
+    ekf_config_path = os.path.join(sim_pkg_dir, 'config', 'ekf.yaml')
+
+    #Nav2导航配置文件
+    nav2_params_file = os.path.join(sim_pkg_dir, 'config', 'nav2_params.yaml') # Nav2 参数文件路径
+    custom_bt_path = os.path.join(sim_pkg_dir, 'config', 'navigate_to_pose_w_replanning_and_recovery.xml')
+
+    #rviz可视化配置文件
+    rviz_config_file = os.path.join(sim_pkg_dir, 'rviz', 'sim.rviz')
+    
     # 1. 启动 Gazebo
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -47,7 +51,7 @@ def generate_launch_description():
         parameters=[{'robot_description': robot_desc, 'use_sim_time': True}]
     )
 
-    # 3. 启动 Joint State Publisher
+    # 3. 启动 Joint State Publisher（唯一节点名，避免与 sim_bringup 同时运行时重名）
     joint_state_publisher = Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
@@ -56,16 +60,29 @@ def generate_launch_description():
     )
 
     # 4. Spawn 机器人
-    # 【修改点 2】：将 -world 参数改为上一节 SDF 文件内部定义的真实 world name
+    # 将 -string 替换为 -topic，让 Gazebo 监听 RSP 发布解析好的 urdf
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
-        arguments=['-world', 'mppi_testing_world','-topic', 'robot_description', '-name', 'leo_sim', '-z', '0.02'],
+        arguments=[
+            '-world', 'simple_room',
+            '-topic', 'robot_description', 
+            '-name', 'leo_sim', 
+            '-z', '0.02',
+            # ▼▼▼ 修改部分开始：新增机械臂初始关节角度 (站立锁死状态) ▼▼▼
+            '-J', 'arm_joint2_to_joint1', '0.0',
+            '-J', 'arm_joint3_to_joint2', '0.0',
+            '-J', 'arm_joint4_to_joint3', '0.0',
+            '-J', 'arm_joint5_to_joint4', '0.0',
+            '-J', 'arm_joint6_to_joint5', '0.0',
+            '-J', 'arm_joint6output_to_joint6', '0.0'
+            # ▲▲▲ 修改部分结束 ▲▲▲
+        ],
         output='screen'
     )
 
     delayed_spawn = TimerAction(
-        period=8.0,  # 延迟时间（秒）
+        period=8.0,  # 延迟时间（秒），如果电脑加载 Gazebo 较慢，可以改成 8.0 或 10.0
         actions=[spawn_robot]
     )
 
@@ -95,7 +112,9 @@ def generate_launch_description():
         parameters=[{'config_file': bridge_config, 'use_sim_time': True}],
     )
 
-    # 6 四方向车轮过滤
+    # 6 四方向车轮过滤：remapping 订阅 /scan、发布 /scan_filtered；
+    #     /scan_filtered 被 nav2_params.yaml 与 mapper_params_online_async.yaml（SLAM）使用。
+    #     注意：与 sim_bringup 二选一运行，避免重复启动同名节点。
     laser_filter_node = Node(
         package='my_robot_sim',
         executable='four_wheel_filter',
@@ -106,7 +125,7 @@ def generate_launch_description():
             {'max_range': 12.0},
         ],
         remappings=[
-            ('scan', '/scan'),              
+            ('scan', '/scan'),              # 原始雷达（bridge 发布）
             ('scan_filtered', '/scan_filtered'),
         ],
     )
@@ -119,10 +138,11 @@ def generate_launch_description():
     # === 生成动态 YAML 文件对象 ===
     configured_params = RewrittenYaml(
         source_file=nav2_params_file,
-        root_key='', 
+        root_key='', # 如果你的小车没有设置 namespace，这里留空即可
         param_rewrites=param_substitutions,
         convert_types=True
     )
+
 
     # 7. 启动 Nav2 (纯导航模式)，延迟 10 秒让 SLAM 先发布 map 再起 Nav2
     nav2_bringup_node = IncludeLaunchDescription(
@@ -136,7 +156,7 @@ def generate_launch_description():
     )
     delayed_nav2 = TimerAction(period=12.0, actions=[nav2_bringup_node])
 
-    # 8. 键盘控制 (已注释)
+    # 8. 键盘控制
     teleop_node = Node(
         package='teleop_twist_keyboard',
         executable='teleop_twist_keyboard',
@@ -148,7 +168,9 @@ def generate_launch_description():
         package='rviz2',
         executable='rviz2',
         name='rviz2',
+        # 使用 arguments 加载配置文件
         arguments=['-d', rviz_config_file],
+        # 参数设置
         parameters=[{'use_sim_time': True}],
         output='screen'
     )
@@ -164,15 +186,16 @@ def generate_launch_description():
         }.items()
     )
 
-     #11 定义 EKF 节点
+    #11 定义 EKF 节点
     ekf_node = Node(
         package='robot_localization',
         executable='ekf_node',
         name='ekf_filter_node',
         output='screen',
-        parameters=[ekf_config_path]
+        parameters=[ekf_config_path,{'use_sim_time': True}]
     )
 
+ 
     return LaunchDescription([
         gz_sim,
         robot_state_publisher,
