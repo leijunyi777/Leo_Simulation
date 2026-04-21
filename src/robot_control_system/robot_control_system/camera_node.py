@@ -86,7 +86,7 @@ class VisionNodeSim(Node):
         sorted_indices = np.argsort(-confidences)
         top_k = min(3, len(sorted_indices))
 
-for i in range(top_k):
+        for i in range(top_k):
             box = boxes[sorted_indices[i]]
             
             # --- 1. 获取基础属性 ---
