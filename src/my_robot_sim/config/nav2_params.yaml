@@ -59,11 +59,11 @@ controller_server:
       vy_std: 0.0                      # 差速车没有横向移动
       wz_std: 0.15                      # 角速度采样的标准差
       
-      vx_max: 0.15                      # 最高前进速度
-      vx_min: -0.15                    # [关键] 最低倒车速度，允许 MPPI 采样倒车轨迹！
+      vx_max: 0.2                      # 最高前进速度
+      vx_min: -0.2                    # [关键] 最低倒车速度，允许 MPPI 采样倒车轨迹！
       vy_max: 0.0
       vy_min: 0.0
-      wz_max: 0.3                      # 最高旋转速度
+      wz_max: 0.4                      # 最高旋转速度
       
       iteration_count: 1               # 优化的迭代次数
       prune_distance: 1.7              # 裁剪掉离机器人过远的路径点

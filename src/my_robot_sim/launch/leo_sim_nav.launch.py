@@ -1,6 +1,6 @@
 import os
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, TimerAction, ExecuteProcess, AppendEnvironmentVariable
+from launch.actions import IncludeLaunchDescription, TimerAction, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
@@ -13,28 +13,29 @@ def generate_launch_description():
     # 获取两个不同包的路径
     sim_pkg_dir = get_package_share_directory('my_robot_sim')
     leo_pkg_dir = get_package_share_directory('leo_description') # 获取 Leo 小车的包路径
-
-    set_model_path = AppendEnvironmentVariable(
-        'GZ_SIM_RESOURCE_PATH', 
-        os.path.join(leo_pkg_dir, '..') 
-    )
-
     # 配置文件与模型路径
     #os.path.join: 将多个路径组合成一个路径，用于获取文件路径
+
+    #模拟仿真配置文件
     urdf_file = os.path.join(leo_pkg_dir, 'urdf', 'leo_sim.urdf.xacro') 
     world_file = os.path.join(sim_pkg_dir, 'worlds', 'testing_world.sdf')   
     bridge_config = os.path.join(sim_pkg_dir, 'config', 'bridge.yaml')
-    slam_params_file = os.path.join(sim_pkg_dir, 'config', 'mapper_params_online_async.yaml')
-    explore_params_file = os.path.join(sim_pkg_dir, 'config', 'explore_params.yaml') # 自动探索参数文件路径
-    rviz_config_file = os.path.join(sim_pkg_dir, 'rviz', 'sim.rviz')
-    ekf_config_path = os.path.join(sim_pkg_dir, 'config', 'ekf.yaml')
-    # 获取参数文件和行为树文件的绝对路径
-    nav2_params_file = os.path.join(sim_pkg_dir, 'config', 'nav2_params.yaml') # Nav2 参数文件路径
-    custom_bt_path = os.path.join(sim_pkg_dir, 'config', 'navigate_to_pose_w_replanning_and_recovery.xml')
+
     # ================= 使用 Command 动态解析 xacro =================
     # 以前是直接 read() 文本，现在需要调用系统命令 'xacro' 转换它
     robot_desc = Command(['xacro ', urdf_file])
 
+    #slam定位配置文件
+    slam_params_file = os.path.join(sim_pkg_dir, 'config', 'mapper_params_online_async.yaml')
+    ekf_config_path = os.path.join(sim_pkg_dir, 'config', 'ekf.yaml')
+
+    #Nav2导航配置文件
+    nav2_params_file = os.path.join(sim_pkg_dir, 'config', 'nav2_params.yaml') # Nav2 参数文件路径
+    custom_bt_path = os.path.join(sim_pkg_dir, 'config', 'navigate_to_pose_w_replanning_and_recovery.xml')
+
+    #rviz可视化配置文件
+    rviz_config_file = os.path.join(sim_pkg_dir, 'rviz', 'sim.rviz')
+    
     # 1. 启动 Gazebo
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -191,12 +192,11 @@ def generate_launch_description():
         executable='ekf_node',
         name='ekf_filter_node',
         output='screen',
-        parameters=[ekf_config_path]
+        parameters=[ekf_config_path,{'use_sim_time': True}]
     )
 
  
     return LaunchDescription([
-        set_model_path,
         gz_sim,
         robot_state_publisher,
         joint_state_publisher,
