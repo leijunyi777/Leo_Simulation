@@ -1,36 +1,37 @@
-import math                                      
-import random                                    
-import rclpy                                     
-from rclpy.node import Node                      
-from rclpy.parameter import Parameter            
-from rclpy.action import ActionClient            
+import math
+import random
+import rclpy
+from rclpy.node import Node
+from rclpy.action import ActionClient
 
-from std_msgs.msg import Bool                    
-from geometry_msgs.msg import PointStamped, PoseStamped, Quaternion  
-from nav_msgs.msg import OccupancyGrid           
-from nav2_msgs.action import NavigateToPose      
-from action_msgs.msg import GoalStatus           
-from tf2_ros import Buffer, TransformListener, TransformException 
-from explore_lite_msgs.msg import ExploreStatus  
+from std_msgs.msg import Bool, String
+from geometry_msgs.msg import PointStamped, PoseStamped, Quaternion, Twist
+from nav_msgs.msg import OccupancyGrid
+from nav2_msgs.action import NavigateToPose
+from action_msgs.msg import GoalStatus
+from tf2_ros import Buffer, TransformListener, TransformException
+from explore_lite_msgs.msg import ExploreStatus
+
+# 导入自定义消息类型 / Import custom message types
+from my_robot_interfaces.msg import ObjectTarget
 
 class NavControllerNode(Node):
     def __init__(self):
         """
-        节点初始化函数。
-        主要负责：声明状态变量、初始化 TF 监听器、连接 Nav2 动作服务端、创建各个话题的发布者和订阅者。
+        节点初始化函数。/ Node initialization.
+        负责：状态变量、TF监听、Nav2动作客户端、发布/订阅及PD接近控制器的初始化。
+        Handles: State variables, TF listener, Nav2 Action Client, Pub/Sub, and PD controller init.
         """
         super().__init__('nav_controller_node')
         
-        # --- 核心状态变量 ---
+        # --- 核心状态变量 / Core State Variables ---
         self.nav_mode = "IDLE"  
         self.target_phase = "OBJECT" 
-
-        # 引入永久压制开关，初始为开启状态
         self.suppression_enabled = True
 
         self.goal_handle = None
         self.latest_map = None  
-        self.latest_costmap = None  # 用于存储最新的全局代价地图数据
+        self.latest_costmap = None  
         self.current_pose = None 
         
         self.last_target_x = 999.0
@@ -38,270 +39,255 @@ class NavControllerNode(Node):
         self.pending_box_x = 999.0
         self.pending_box_y = 999.0
         
-        self.standoff_dist = 0.37  
+        self.standoff_dist = 0.5  # 代价地图智能找点的半径 0.5m
 
         self.explore_lite_active = False     
         self.cmd_explore_enabled = False     
-        self.pending_manip_fb_for_resume = -1 
         self._random_after_complete_timer = None
+        
+        # 从 FSM 接收的当前任务目标 / Target info from FSM
+        self.active_task_color = "NONE" 
+        self.active_task_name = "NONE"
 
-        # 初始化 TF 监听器，用于获取机器人自身在地图中的位姿
+        # --- 接近阶段 PD 控制参数 / Close Approach PD Control Params ---
+        self.kp_linear = 0.5
+        self.kd_linear = 0.1
+        self.kp_angular = 0.5
+        self.kd_angular = 0.1
+        
+        self.prev_error_x = 0.0
+        self.prev_error_z = 0.0
+        self.prev_time = self.get_clock().now()
+        
+        self.last_msg_time = self.get_clock().now()
+        self.timeout_sec = 0.5
+
+        # 初始化 TF 监听器 / Init TF Listener
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # 初始化 Nav2 动作客户端，用于发送导航目标点
+        # 初始化 Nav2 动作客户端 / Init Nav2 Action Client
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.get_logger().info('正在等待 Nav2 动作服务端 (navigate_to_pose) 启动...')
+        self.get_logger().info('等待 Nav2 动作服务端就绪... / Waiting for Nav2 Action Server...')
         while not self.nav_client.wait_for_server(timeout_sec=2.0):
-            self.get_logger().info('Nav2 服务端尚未就绪，继续等待中...')
+            pass
+        self.get_logger().info('Nav2 服务端已连接！/ Nav2 Server Connected!') 
 
-        self.get_logger().info('Nav2 服务端已连接！节点准备就绪。') 
-
-        # 订阅与发布者的设置
+        # --- 订阅与发布设置 / Pub & Sub Setup ---
+        # 导航相关 / Navigation related
         self.sub_cmd_explore = self.create_subscription(Bool, '/nav/cmd_explore', self.explore_cb, 10)
         self.sub_goal_point  = self.create_subscription(PointStamped, '/nav/goal_point', self.point_cb, 10)
         self.pub_fb = self.create_publisher(Bool, '/nav/goal_reached', 10)
-        self.sub_manip_fb = self.create_subscription(Bool, '/manipulator_feedback', self.manip_feedback_cb, 10)
+        
+        # 视觉/接近相关 / Vision & Approach related
+        # 【修改点】：订阅 FSM 发出的 /nav/target_info 以获取准确的颜色和类型
+        self.sub_target_info = self.create_subscription(String, '/nav/target_info', self.target_info_cb, 10)
+        self.sub_vision_target = self.create_subscription(ObjectTarget, '/detected_object', self.vision_target_cb, 10)
+        self.pub_cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
 
+        # 探索相关 / Exploration related
         self.pub_explore_resume = self.create_publisher(Bool, 'explore/resume', 10)
         self.sub_explore_status = self.create_subscription(ExploreStatus, 'explore/status', self.explore_status_cb, 10)
         
-        # 订阅静态地图和代价地图
+        # 地图相关 / Map related
         self.sub_map = self.create_subscription(OccupancyGrid, '/map', self.map_cb, 10)
-        # 【新增】订阅全局代价地图以供后续取点时检查代价值
         self.sub_costmap = self.create_subscription(OccupancyGrid, '/global_costmap/costmap', self.costmap_cb, 10)
 
-        # 定时器设置
-        self.pose_timer = self.create_timer(0.05, self.update_current_pose_cb) # 50ms 获取一次位姿
-        self._idle_timer = self.create_timer(0.1, self._keep_explore_paused_cb) # 100ms 执行一次探索压制
+        # 定时器设置 / Timers
+        self.pose_timer = self.create_timer(0.05, self.update_current_pose_cb) # 50ms获取一次位姿
+        self._idle_timer = self.create_timer(0.1, self._keep_explore_paused_cb) # 探索压制
+        self.watchdog_timer = self.create_timer(0.1, self.watchdog_callback) # 接近时的安全看门狗
 
     # ==========================================================================
-    # 基础位姿与计算工具
+    # 基础状态更新 / Basic State Updates
     # ==========================================================================
     def update_current_pose_cb(self):
-        """
-        定时器回调函数：更新机器人当前在 map 坐标系下的位姿。
-        通过 TF 树查询 map 到 base_footprint 的变换关系。
-        """
         try:
             t = self.tf_buffer.lookup_transform('map', 'base_footprint', rclpy.time.Time())
             self.current_pose = (t.transform.translation.x, t.transform.translation.y)
         except TransformException:
             pass 
 
-    def map_cb(self, msg: OccupancyGrid):
-        """
-        话题回调函数：接收并保存最新的静态地图数据。
-        """
-        self.latest_map = msg
+    def map_cb(self, msg: OccupancyGrid): self.latest_map = msg
+    def costmap_cb(self, msg: OccupancyGrid): self.latest_costmap = msg
 
-    def costmap_cb(self, msg: OccupancyGrid):
+    def target_info_cb(self, msg: String):
         """
-        话题回调函数：接收并保存最新的代价地图(costmap)数据。
-        供 get_random_free_point 中检查代价值使用。
+        【新增解析器】解析 FSM 发送的目标信息，格式例如: "color:red,name:object"
         """
-        self.latest_costmap = msg
+        try:
+            parts = msg.data.split(',')
+            for part in parts:
+                if part.startswith('color:'):
+                    self.active_task_color = part.split(':')[1]
+                elif part.startswith('name:'):
+                    self.active_task_name = part.split(':')[1]
+            self.get_logger().info(f"【锁定任务】当前追踪目标更新为 -> 颜色: {self.active_task_color}, 类别: {self.active_task_name}")
+        except Exception as e:
+            self.get_logger().warn(f"解析 /nav/target_info 失败: {e}, 收到内容: {msg.data}")
 
     def get_quaternion_from_a_to_b(self, a_pos: tuple, b_pos: tuple) -> Quaternion:
-        """
-        辅助计算函数：计算从点 A 指向点 B 的四元数朝向。
-        返回的四元数代表的偏航角 (Yaw) 是机器人在 A 点面朝 B 点的角度。
-        """
-        dx = b_pos[0] - a_pos[0]
-        dy = b_pos[1] - a_pos[1]
+        dx, dy = b_pos[0] - a_pos[0], b_pos[1] - a_pos[1]
         yaw = math.atan2(dy, dx)
         q = Quaternion()
-        q.x, q.y = 0.0, 0.0
-        q.z = math.sin(yaw / 2.0)
-        q.w = math.cos(yaw / 2.0)
+        q.z, q.w = math.sin(yaw / 2.0), math.cos(yaw / 2.0)
         return q
 
+    def get_cost_at(self, x: float, y: float) -> int:
+        """获取代价地图某物理坐标点的值 / Get costmap value at physical coordinates"""
+        if not self.latest_costmap:
+            return 255
+        info = self.latest_costmap.info
+        cm_x = int((x - info.origin.position.x) / info.resolution)
+        cm_y = int((y - info.origin.position.y) / info.resolution)
+        if 0 <= cm_x < info.width and 0 <= cm_y < info.height:
+            return self.latest_costmap.data[cm_y * info.width + cm_x]
+        return 255
+
     # ==========================================================================
-    # m-explore 控制逻辑
+    # 探索与 FSM 指令响应 / Exploration & Command Response
     # ==========================================================================
     def _keep_explore_paused_cb(self):
-        """
-        压制定时器回调函数：
-        在初始状态且处于 IDLE 时，持续向 m-explore 发布 False（暂停）指令。
-        一旦 suppression_enabled 开关变为 False，则不再触发。
-        """
         if self.suppression_enabled and self.nav_mode == "IDLE":
             self.pub_explore_resume.publish(Bool(data=False))
 
     def explore_cb(self, msg: Bool):
-        """
-        话题回调函数：处理探索启停指令。
-        如果是首次接收到 True，则永久解除对 m-explore 的初始压制。
-        若不处于 explore_lite 激活状态，则派发一个随机导航点作为过渡。
-        """
         self.cmd_explore_enabled = msg.data
         if msg.data:
-            # 只要收到第一次 True，永久关闭压制功能
             if self.suppression_enabled:
-                self.get_logger().info('首次启动：解除压制，把指挥权交给 explore_lite')
                 self.suppression_enabled = False
 
             self.nav_mode = "EXPLORE"
-            # 2. 【关键】只发 resume，不要调用 self.dispatch_random_goal()
-            # 让 C++ 的 explore_lite 自己去算边界并发送目标
+            # 重置阶段
+            self.target_phase = "OBJECT" 
+            self.last_target_x, self.last_target_y = 999.0, 999.0
+            
             self.pub_explore_resume.publish(Bool(data=True))
         else:
-            self.nav_mode = "IDLE"
+            if self.nav_mode == "EXPLORE":
+                self.nav_mode = "IDLE"
             self.pub_explore_resume.publish(Bool(data=False))
             if self.goal_handle:
                 self.goal_handle.cancel_goal_async()
 
     def explore_status_cb(self, msg: ExploreStatus):
-        """
-        话题回调函数：监听 m-explore 包的运行状态。
-        当探索完成或回到起点时，取消活跃状态，并在3秒后派发一个随机点重新激活机器人。
-        """
         if msg.status in [ExploreStatus.EXPLORATION_COMPLETE, ExploreStatus.RETURNED_TO_ORIGIN]:
             self.explore_lite_active = False
-            if self._random_after_complete_timer is not None:
-                self._random_after_complete_timer.cancel()
+            if self._random_after_complete_timer: self._random_after_complete_timer.cancel()
+            
             def _start_random_after_complete():
                 self._random_after_complete_timer.cancel()
                 self._random_after_complete_timer = None
                 if self.nav_mode == "EXPLORE":
                     self.dispatch_random_goal()
+                    
             self._random_after_complete_timer = self.create_timer(5.0, _start_random_after_complete)
         else:
             self.explore_lite_active = True
 
     # ==========================================================================
-    # 导航计算逻辑
+    # 智能避让与 Nav2 控制 (Costmap Smart Standoff)
     # ==========================================================================
     def point_cb(self, msg: PointStamped):
-        """
-        话题回调函数：处理收到的具体目标点 (如抓取目标或放置目标)。
-        根据当前的阶段 (OBJECT 或 BOX) 规划前往目标附近避让点的路径。
-        """
         tx, ty = msg.point.x, msg.point.y
-        # 滤除抖动：如果新目标点与上一次的目标点距离过近，则忽略
+        # 滤除微小抖动
         if math.hypot(tx - self.last_target_x, ty - self.last_target_y) < 0.2:
             return
         self.last_target_x, self.last_target_y = tx, ty
 
         if self.explore_lite_active:
             self.pub_explore_resume.publish(Bool(data=False))
-            self.pending_manip_fb_for_resume = 2
+
+        # 中断可能正在进行的接近行为
+        if self.nav_mode in ["APPROACH_OBJECT", "APPROACH_BOX"]:
+            self.pub_cmd_vel.publish(Twist()) 
 
         if self.target_phase == "OBJECT":
             self.nav_mode = "GOTO_OBJECT"
-            self.get_logger().info("【前往抓取】：计算距离目标 370mm 处的停靠点")
-            self._execute_standoff_nav(tx, ty)
+            self.get_logger().info("【Nav2】基于 Costmap 计算前往物体的安全预备点...")
+            self._execute_smart_standoff_nav(tx, ty)
         else:
             if self.nav_mode not in ["GOTO_BOX_ORIGIN", "GOTO_BOX_TARGET"]:
                 self.nav_mode = "GOTO_BOX_ORIGIN"
                 self.pending_box_x, self.pending_box_y = tx, ty
-                self.get_logger().info("【前往放置-阶段1】：先返回(0,0)，朝向起始反方向(Yaw=pi)")
+                self.get_logger().info("【Nav2】前往放置：先退回(0,0)原点开阔处")
                 q_origin = Quaternion()
-                q_origin.x, q_origin.y = 0.0, 0.0
                 q_origin.z, q_origin.w = math.sin(math.pi / 2.0), math.cos(math.pi / 2.0)
                 self.send_nav_goal(0.0, 0.0, q_origin)
             elif self.nav_mode == "GOTO_BOX_ORIGIN":
                 self.pending_box_x, self.pending_box_y = tx, ty
             elif self.nav_mode == "GOTO_BOX_TARGET":
                 self.pending_box_x, self.pending_box_y = tx, ty
-                self._execute_standoff_nav(tx, ty)
+                self.get_logger().info("【Nav2】基于 Costmap 计算前往放置框的安全预备点...")
+                self._execute_smart_standoff_nav(tx, ty)
 
-    def _execute_standoff_nav(self, tx, ty):
+    def _execute_smart_standoff_nav(self, tx, ty):
         """
-        计算逻辑函数：给定一个物体中心坐标，计算并发送一个距离其 standoff_dist 距离的停靠点，
-        同时使机器人的车头面向目标物。
+        以目标点为中心生成12个候选点(距离0.5m)，根据代价地图选取最优停靠点。
         """
-        if self.current_pose is None:
-            self.get_logger().warn("尚未获取到自身位姿，无法计算连线避让路径！")
-            return
-        rx, ry = self.current_pose
-        q_facing_target = self.get_quaternion_from_a_to_b((rx, ry), (tx, ty))
-        yaw = math.atan2(ty - ry, tx - rx)
-        gx = tx - self.standoff_dist * math.cos(yaw)
-        gy = ty - self.standoff_dist * math.sin(yaw)
-        self.send_nav_goal(gx, gy, q_facing_target)
+        if self.current_pose is None or self.latest_costmap is None:
+            self.get_logger().warn("缺乏位姿或代价地图，使用备用直线停靠！")
+            rx, ry = self.current_pose if self.current_pose else (0.0, 0.0)
+            yaw = math.atan2(ty - ry, tx - rx)
+            best_x = tx - self.standoff_dist * math.cos(yaw)
+            best_y = ty - self.standoff_dist * math.sin(yaw)
+        else:
+            rx, ry = self.current_pose
+            best_x, best_y = tx, ty
+            min_cost = 256
+            min_dist = 9999.0
 
-    def manip_feedback_cb(self, msg: Bool):
-        """
-        话题回调函数：接收机械臂执行状态反馈。
-        用来判定是否可以恢复底盘的自主探索状态。
-        """
-        if not msg.data or self.pending_manip_fb_for_resume <= 0:
-            return
-        self.pending_manip_fb_for_resume -= 1
-        if self.pending_manip_fb_for_resume == 0:
-            self.pending_manip_fb_for_resume = -1
-            if self.cmd_explore_enabled:
-                self.pub_explore_resume.publish(Bool(data=True))
+            # 评估 12 个方向 / 30 degree intervals
+            for i in range(12):
+                angle = i * (math.pi / 6.0) 
+                px = tx + self.standoff_dist * math.cos(angle)
+                py = ty + self.standoff_dist * math.sin(angle)
+                
+                cost = self.get_cost_at(px, py)
+                dist = math.hypot(px - rx, py - ry)
+                
+                # 选择代价最小的，代价相同时选距离机器人最近的
+                if cost < min_cost or (cost == min_cost and dist < min_dist):
+                    min_cost = cost
+                    min_dist = dist
+                    best_x, best_y = px, py
+            
+            if min_cost >= 253:
+                self.get_logger().warn("警告：周围 0.5m 预备点均位于致命障碍物中！")
 
-    # ==========================================================================
-    # Nav2 核心调度
-    # ==========================================================================
+        # 让机器人抵达后正对目标
+        q_facing_target = self.get_quaternion_from_a_to_b((best_x, best_y), (tx, ty))
+        self.send_nav_goal(best_x, best_y, q_facing_target)
+
     def get_random_free_point(self) -> tuple:
-        """
-        【修改的重点函数】获取地图上的随机安全点。
-        条件：
-        1. static map 对应值为 0 (空闲)。
-        2. 距离当前位姿的距离大于 1m。
-        3. 代价地图(costmap) 对应位置的值 <= 250。
-        """
-        # 确保必须的数据都已加载
-        if self.latest_map is None or self.latest_costmap is None or self.current_pose is None: 
-            return None
-            
-        map_data = self.latest_map
-        costmap_data = self.latest_costmap
+        if self.latest_map is None or self.latest_costmap is None or self.current_pose is None: return None
+        map_data, costmap_data = self.latest_map, self.latest_costmap
         rx, ry = self.current_pose
-        
         for _ in range(1000):
-            # 在静态地图中随机抽取一个索引
             idx = random.randint(0, map_data.info.width * map_data.info.height - 1)
-            
-            # 条件 1: 静态地图为空闲
             if map_data.data[idx] == 0:
-                # 将地图索引转换为物理世界坐标 (x, y)
                 x = map_data.info.origin.position.x + (idx % map_data.info.width + 0.5) * map_data.info.resolution
                 y = map_data.info.origin.position.y + (idx // map_data.info.width + 0.5) * map_data.info.resolution
-                
-                # 条件 2: 目标点距离当前位置大于 1m
                 if math.hypot(x - rx, y - ry) > 1.0:
-                    
-                    # 条件 3: 检查 costmap 值
-                    # 根据物理坐标反算在代价地图中的网格坐标 (因为 costmap 和 map 的分辨率/原点可能不同)
                     cm_info = costmap_data.info
-                    cm_x = int((x - cm_info.origin.position.x) / cm_info.resolution)
-                    cm_y = int((y - cm_info.origin.position.y) / cm_info.resolution)
-                    
-                    # 确保该点处于代价地图范围之内
+                    cm_x, cm_y = int((x - cm_info.origin.position.x) / cm_info.resolution), int((y - cm_info.origin.position.y) / cm_info.resolution)
                     if 0 <= cm_x < cm_info.width and 0 <= cm_y < cm_info.height:
-                        cm_idx = cm_y * cm_info.width + cm_x
-                        # costmap 值 <= 250 才采纳（避免生成在膨胀致命层内）
-                        if costmap_data.data[cm_idx] <= 250:
+                        if costmap_data.data[cm_y * cm_info.width + cm_x] <= 250:
                             return (x, y)
         return None
 
     def dispatch_random_goal(self):
-        """
-        调度函数：取消当前目标(如有)，并生成一个新的随机点，发送给 Nav2 服务端。
-        """
         if self.goal_handle:
             self.goal_handle.cancel_goal_async()
             self.goal_handle = None
-            
         target = self.get_random_free_point()
-        # 如果找不到合适的点或者未就绪，1秒后重试
         if target is None or self.current_pose is None:
             self.create_timer(1.0, self.dispatch_random_goal)
             return
-            
-        # 让机器人面向生成的随机点
         q_facing_target = self.get_quaternion_from_a_to_b(self.current_pose, target)
         self.send_nav_goal(target[0], target[1], q_facing_target)
 
     def send_nav_goal(self, x: float, y: float, orientation_q: Quaternion):
-        """
-        动作请求函数：将坐标点 (x,y) 结合朝向四元数打包成 NavigateToPose 目标，发送给 Nav2 动作服务端。
-        """
         pose = PoseStamped()
         pose.header.frame_id = 'map'
         pose.header.stamp = self.get_clock().now().to_msg()
@@ -311,10 +297,6 @@ class NavControllerNode(Node):
         self.nav_client.send_goal_async(NavigateToPose.Goal(pose=pose)).add_done_callback(self.goal_response_cb)
 
     def goal_response_cb(self, future):
-        """
-        动作回调函数：接收 Nav2 服务端是否接受目标点的响应。
-        若被拒绝且处于探索状态，则重新派发新的随机点。
-        """
         self.goal_handle = future.result()
         if not self.goal_handle.accepted:
             if self.nav_mode == "EXPLORE" and not self.explore_lite_active:
@@ -323,46 +305,126 @@ class NavControllerNode(Node):
         self.goal_handle.get_result_async().add_done_callback(self.result_cb)
 
     def result_cb(self, future):
-        """
-        动作回调函数：处理 Nav2 导航执行的结果 (成功、失败、取消等)。
-        根据不同的导航模式 (抓取停靠、回到原点、放置停靠) 推进状态机流转。
-        """
+        """Nav2 到达预定地点后，进入视觉接近模式"""
         status = future.result().status
         self.goal_handle = None
 
         if status == GoalStatus.STATUS_SUCCEEDED:
             if self.nav_mode == "GOTO_OBJECT":
-                self.pub_fb.publish(Bool(data=True)) 
-                self.nav_mode = "IDLE"  # 正常回 IDLE，压制不会再触发
-                self.target_phase = "BOX"            
-                self.last_target_x, self.last_target_y = 999.0, 999.0
+                self.get_logger().info("【Nav2完成】到达预备点，启动视觉接近 -> APPROACH_OBJECT")
+                self.nav_mode = "APPROACH_OBJECT"
+                self.start_approach_sequence()
                 
             elif self.nav_mode == "GOTO_BOX_ORIGIN":
-                self.get_logger().info("【前往放置-阶段2】：已到达(0,0)，前往避让点")
+                self.get_logger().info("【Nav2完成】已到达(0,0)，继续前往放置预备点")
                 self.nav_mode = "GOTO_BOX_TARGET"
-                self._execute_standoff_nav(self.pending_box_x, self.pending_box_y)
+                self._execute_smart_standoff_nav(self.pending_box_x, self.pending_box_y)
                 
             elif self.nav_mode == "GOTO_BOX_TARGET":
-                self.pub_fb.publish(Bool(data=True)) 
-                self.nav_mode = "IDLE"  # 正常回 IDLE，压制不会再触发
-                self.last_target_x, self.last_target_y = 999.0, 999.0
+                self.get_logger().info("【Nav2完成】到达放置预备点，启动视觉接近 -> APPROACH_BOX")
+                self.nav_mode = "APPROACH_BOX"
+                self.start_approach_sequence()
 
             elif self.nav_mode == "EXPLORE" and not self.explore_lite_active:
                 self.dispatch_random_goal()
 
         elif status != GoalStatus.STATUS_CANCELED:
-            # 导航失败(且未被取消)的容错处理，重发相应的指令
+            # 失败重试
             if self.nav_mode == "EXPLORE" and not self.explore_lite_active:
                 self.dispatch_random_goal()
             elif self.nav_mode == "GOTO_BOX_ORIGIN":
                 q_origin = Quaternion()
-                q_origin.x, q_origin.y = 0.0, 0.0
                 q_origin.z, q_origin.w = math.sin(math.pi / 2.0), math.cos(math.pi / 2.0)
                 self.send_nav_goal(0.0, 0.0, q_origin)
             elif self.nav_mode in ["GOTO_OBJECT", "GOTO_BOX_TARGET"]:
                 tx = self.last_target_x if self.nav_mode == "GOTO_OBJECT" else self.pending_box_x
                 ty = self.last_target_y if self.nav_mode == "GOTO_OBJECT" else self.pending_box_y
-                self._execute_standoff_nav(tx, ty)
+                self._execute_smart_standoff_nav(tx, ty)
+
+    # ==========================================================================
+    # 视觉精准接近阶段 / Visual Close Approach Phase (PD Control)
+    # ==========================================================================
+    def start_approach_sequence(self):
+        """初始化 PD 状态"""
+        self.prev_error_x = 0.0
+        self.prev_error_z = 0.0
+        self.prev_time = self.get_clock().now()
+        self.last_msg_time = self.get_clock().now()
+        self.pub_cmd_vel.publish(Twist()) # 停机消除残余速度
+
+    def vision_target_cb(self, msg: ObjectTarget):
+        """
+        视觉控制介入：根据 FSM 传来的 task info 过滤物体
+        """
+        if self.nav_mode not in ["APPROACH_OBJECT", "APPROACH_BOX"]:
+            return
+            
+        # 根据目标要求过滤，防止被别的颜色块吸走
+        target_type = "object" if self.nav_mode == "APPROACH_OBJECT" else "box"
+        if msg.color != self.active_task_color or msg.name != target_type:
+            return
+
+        self.last_msg_time = self.get_clock().now()
+        
+        cmd_vel_msg = self.calculate_pd_command(msg)
+        self.pub_cmd_vel.publish(cmd_vel_msg)
+
+    def calculate_pd_command(self, msg: ObjectTarget) -> Twist:
+        cmd = Twist()
+        current_time = self.get_clock().now()
+        
+        dt = (current_time - self.prev_time).nanoseconds / 1e9
+        if dt <= 0: dt = 0.001 
+
+        # 计算误差 (期望Z距摄像头=0.325m, 期望横向居中X=0)
+        error_x = msg.x - 0.0
+        error_z = msg.z - 0.325
+
+        distance_error = math.hypot(error_x, error_z)
+        
+        if distance_error < 0.01:
+            self.get_logger().info(f'【接近完成】位置误差 {distance_error:.3f}m，通知主控节点。')
+            self.pub_fb.publish(Bool(data=True)) # 彻底完成，交给 FSM
+            
+            # 状态交接
+            if self.nav_mode == "APPROACH_OBJECT":
+                self.target_phase = "BOX" 
+            self.nav_mode = "IDLE"
+            self.last_target_x, self.last_target_y = 999.0, 999.0
+            
+            return Twist()
+
+        # PD 计算
+        deriv_z = (error_z - self.prev_error_z) / dt
+        linear_output = (self.kp_linear * error_z) + (self.kd_linear * deriv_z)
+
+        deriv_x = (error_x - self.prev_error_x) / dt
+        angular_output = (self.kp_angular * error_x) + (self.kd_angular * deriv_x)
+
+        # 限幅输出
+        cmd.linear.x = max(-0.1, min(0.1, linear_output))
+        cmd.angular.z = max(-0.1, min(0.1, -angular_output))
+
+        self.prev_error_z = error_z
+        self.prev_error_x = error_x
+        self.prev_time = current_time
+
+        return cmd
+
+    def watchdog_callback(self):
+        """看门狗：目标丢失超过0.5秒发急停"""
+        if self.nav_mode not in ["APPROACH_OBJECT", "APPROACH_BOX"]:
+            return
+
+        current_time = self.get_clock().now()
+        time_since_last_msg = (current_time - self.last_msg_time).nanoseconds / 1e9
+        
+        if time_since_last_msg > self.timeout_sec:
+            self.pub_cmd_vel.publish(Twist())
+            self.get_logger().warn('【接近看门狗】丢失视觉目标！发送急停指令。', throttle_duration_sec=2.0)
+            self.prev_error_x = 0.0
+            self.prev_error_z = 0.0
+            self.prev_time = current_time
 
 def main():
     rclpy.init()
