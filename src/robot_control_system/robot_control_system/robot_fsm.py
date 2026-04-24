@@ -36,24 +36,19 @@ COMPONENT: Main Controller Node (Master Logic & FSM)
           Marks current pair as 'solved'. Transition -> [1] SEARCH.
 
 --------------------------------------------------------------------------------
-2. PUB/SUB/SRV INTERFACE REFERENCE
+2. PUB/SUB INTERFACE REFERENCE
 --------------------------------------------------------------------------------
-Publishers (Controller -> Actuators/Nav):
+Publishers (Controller -> Actuators):
   - /nav/goal_point       (PointStamped) : Target map coordinates for Nav
   - /nav/cmd_explore      (Bool)         : Enable/Disable random exploration
+  - /nav/target_info      (String)       : Send current task (color + name) to Nav ONCE
   - /arm/grasp_pose       (CamArmPose)   : Target camera_link coordinates for Arm
   - /arm/grasp_status     (GripperState) : Control gripper (close/open)
   - /arm/initial_position (GripperState) : Command arm to return to safe/initial pose
-  - /manipulator_feedback (Bool)         : Arm action completion signal to unblock Nav
 
-Subscribers (Sensors/Nav -> Controller):
+Subscribers (Sensors -> Controller):
   - /detected_object      (ObjectTarget) : 3D coordinates from Vision
   - /nav/goal_reached     (Bool)         : Success feedback from Nav
-  - /detection_state      (Bool)         : Camera running/health state
-
-Services (Server -> External/Test):
-  - ~/test_update_color_status (UpdateColorStatus) : Manual intervention interface to 
-                                                modify or clear tracked color states
 --------------------------------------------------------------------------------
 3. OUTPUT CONTROL MATRIX (Pure Boolean)
 --------------------------------------------------------------------------------
@@ -79,7 +74,6 @@ import tf2_geometry_msgs
 
 # Custom interfaces
 from my_robot_interfaces.msg import ObjectTarget, GripperState, CamArmPose
-from my_robot_interfaces.srv import TESTControlColorStatus
 
 # ==============================================================================
 # STATE MACHINE CONSTANTS
@@ -108,7 +102,6 @@ class RobotControlNode(Node):
 
         self.map_hash = {}
         self.active_target_color = "NONE"
-        self.camera_working = False
 
         self.vision_msg_tick = 0        
         self.last_obj_update_tick = -1  
@@ -120,34 +113,20 @@ class RobotControlNode(Node):
         self.check_start_tick = 0       
         self.arm_timer = None           
 
-        # [MODIFICATION: Added a tick counter specifically for the control loop 
-        # to trigger periodic brain dumps without relying on vision messages]
-        self.control_loop_tick = 0      
-
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # Publishers
-        self.pub_nav_point   = self.create_publisher(PointStamped, '/nav/goal_point', 10)
-        self.pub_nav_explore = self.create_publisher(Bool, '/nav/cmd_explore', 10)
-        self.pub_arm_pose    = self.create_publisher(CamArmPose, '/arm/grasp_pose', 10)
-        self.pub_arm_grip    = self.create_publisher(GripperState, '/arm/grasp_status', 10)
-        self.pub_arm_init    = self.create_publisher(GripperState, '/arm/initial_position', 10)
-        self.pub_manip_fb    = self.create_publisher(Bool, '/manipulator_feedback', 10)
-        self.pub_active_color = self.create_publisher(String, '/current_task_color', 10)
+        self.pub_nav_point       = self.create_publisher(PointStamped, '/nav/goal_point', 10)
+        self.pub_nav_explore     = self.create_publisher(Bool, '/nav/cmd_explore', 10)
+        self.pub_nav_target_info = self.create_publisher(String, '/nav/target_info', 10) 
+        self.pub_arm_pose        = self.create_publisher(CamArmPose, '/arm/grasp_pose', 10)
+        self.pub_arm_grip        = self.create_publisher(GripperState, '/arm/grasp_status', 10)
+        self.pub_arm_init        = self.create_publisher(GripperState, '/arm/initial_position', 10)
 
         # Subscribers
-        self.sub_vision_state = self.create_subscription(Bool, '/detection_state', self.vision_state_callback, 10)
         self.sub_vision_target = self.create_subscription(ObjectTarget, '/detected_object', self.vision_target_callback, 10)
         self.sub_move_fb       = self.create_subscription(Bool, '/nav/goal_reached', self.move_feedback_callback, 10)
-
-        # Service Servers
-        self.srv_test_color_status = self.create_service(
-            TESTControlColorStatus, 
-            '/test_update_color_status', 
-            self.test_update_color_status_callback
-        )
-        self.get_logger().info('Test Service "/test_update_color_status" is ready.')
 
         # Output Control Matrix
         self.control_matrix = {
@@ -163,116 +142,13 @@ class RobotControlNode(Node):
         self.init_timer = self.create_timer(1.0, self.check_hardware_readiness)
         self.control_loop_timer = self.create_timer(0.1, self.execute_control_loop)
 
-        self.get_logger().info('Master Control Node Initialized. Entering INIT state.')
-
-
-    def test_update_color_status_callback(self, request, response):
-        """
-        Handles requests to update the status of colors in the state machine.
-        """
-        req_color = request.color.lower()
-        req_status = request.status.lower()
-        target_colors = []
-        
-        if req_color == "all":
-            target_colors = list(self.map_hash.keys())
-            if not target_colors:
-                response.success = False
-                response.message = "No colors found in map_hash to update."
-                return response
-        else:
-            if req_color in self.map_hash:
-                target_colors = [req_color]
-            # [MODIFICATION: Allow 'inject' to proceed even if the color hasn't been tracked yet]
-            elif req_status == 'inject':
-                target_colors = [req_color]
-            else:
-                response.success = False
-                response.message = f"Color '{req_color}' is not currently tracked."
-                return response
-                
-        updated_count = 0
-        skipped_count = 0
-        for color in target_colors:
-            if color == self.active_target_color and self.current_state != STATE_SEARCH:
-                self.get_logger().warn(
-                    f"Action rejected: Cannot modify active target '{color}' "
-                    f"while FSM is in state {self.current_state}."
-                )
-                skipped_count += 1
-                continue 
-            
-            if req_status == 'clear':
-                if color in self.map_hash:
-                    del self.map_hash[color]
-                updated_count += 1
-            
-            # =================================================================
-            # [MODIFICATION: "Inject" cheat code to instantly populate SDF coords]
-            # =================================================================
-            elif req_status == 'inject':
-                def make_point(x, y, z):
-                    pt = PointStamped()
-                    pt.header.frame_id = 'map'
-                    pt.header.stamp = self.get_clock().now().to_msg()
-                    pt.point.x, pt.point.y, pt.point.z = float(x), float(y), float(z)
-                    return pt
-
-                if color == 'yellow':
-                    self.map_hash[color] = {
-                        'status': 'paired', 
-                        'object': {'map_pose': make_point(1.0, -2.0, 0.225)},
-                        'box':    {'map_pose': make_point(3.8, 2.3, 0.11)}
-                    }
-                elif color == 'red':
-                    self.map_hash[color] = {
-                        'status': 'paired', 
-                        'object': {'map_pose': make_point(-2.0, -1.0, 0.225)},
-                        'box':    {'map_pose': make_point(2.5, 0.5, 0.11)}
-                    }
-                elif color == 'purple':
-                    self.map_hash[color] = {
-                        'status': 'paired', 
-                        'object': {'map_pose': make_point(-3.0, 2.0, 0.225)},
-                        'box':    {'map_pose': make_point(-4.0, -2.4, 0.11)}
-                    }
-                updated_count += 1
-            # =================================================================
-            
-            else:
-                if color not in self.map_hash:
-                    self.map_hash[color] = {'object': {}, 'box': {}}
-                self.map_hash[color]['status'] = req_status
-                if req_status == 'notfound':
-                    self.map_hash[color]['object'] = {}
-                    self.map_hash[color]['box'] = {}
-                updated_count += 1
-                
-        response.success = (updated_count > 0)
-        msg_parts = []
-        if updated_count > 0:
-            msg_parts.append(f"Applied '{req_status}' to {updated_count} color(s).")
-        if skipped_count > 0:
-            msg_parts.append(f"Skipped {skipped_count} active color(s) for safety.")
-        response.message = " ".join(msg_parts)
-        self.get_logger().info(f"Service Call Result: {response.message}")
-        return response
-
-    def vision_state_callback(self, msg: Bool):
-        self.vision_msg_tick += 1
-        if not self.camera_working:
-            self.get_logger().info("Vision system heartbeat detected. Camera is working normally.")
-            self.camera_working = True
+        self.get_logger().info('Master Control Node Initialized. Entering INIT state. Waiting for hardware...')
 
     def execute_control_loop(self):
         """
         High-frequency control loop. Evaluates state machine logic: processes search pairings, 
         publishes navigation targets, and handles event-driven verification for grasp/drop success.
         """
-        self.control_loop_tick += 1
-        color_msg = String()
-        color_msg.data = str(self.active_target_color)
-        self.pub_active_color.publish(color_msg)
         if self.current_state == STATE_SEARCH:
             target_color = None
             has_paired = False
@@ -297,13 +173,7 @@ class RobotControlNode(Node):
                 self.active_target_color = deferred_color
                 self.transition_to_state(STATE_MOVE_TO_OBJECT, f"Processing deferred: {deferred_color.upper()}")
 
-        elif self.current_state in [STATE_MOVE_TO_OBJECT, STATE_MOVE_TO_BOX]:
-            target_type = 'object' if self.current_state == STATE_MOVE_TO_OBJECT else 'box'
-            entry = (self.map_hash.get(self.active_target_color, {}) or {}).get(target_type)
-            if entry is not None and entry.get('map_pose') is not None:
-                mp = entry['map_pose']
-                mp.header.stamp = self.get_clock().now().to_msg()
-                self.pub_nav_point.publish(mp)
+        # NOTE: Removed high-frequency pub_nav_point logic from here. It is now handled in transition_to_state.
 
         elif self.current_state == STATE_GRASP:
             if self.arm_action_done:
@@ -313,7 +183,6 @@ class RobotControlNode(Node):
                 if miss_count >= self.grasp_miss_threshold:
                     self.get_logger().info("GRASP SUCCESS (Object absent).")
                     self.arm_action_done = False
-                    self.pub_manip_fb.publish(Bool(data=True)) 
                     self.transition_to_state(STATE_MOVE_TO_BOX, "Heading to Target Box.")
                 
                 elif ticks_since_check > self.grasp_miss_threshold * 2:
@@ -324,9 +193,6 @@ class RobotControlNode(Node):
                         self.get_logger().info("GRASP FAILED 5 TIMES. Marking 'deferred'.")
                         if self.active_target_color in self.map_hash:
                             self.map_hash[self.active_target_color]['status'] = 'deferred'
-
-                        self.pub_manip_fb.publish(Bool(data=True)) 
-                        self.active_target_color = "NONE" 
                         self.transition_to_state(STATE_SEARCH, "Resuming Search.")
                     else:
                         self.get_logger().info(f"GRASP FAILED. Retrying (Attempt {self.grasp_attempts+1}/5)")
@@ -337,24 +203,28 @@ class RobotControlNode(Node):
 
         elif self.current_state == STATE_DROP:
             if self.arm_action_done:
-                self.get_logger().info("DROP ACTION COMPLETED. Assuming success.")
-                self.arm_action_done = False
-                self.pub_manip_fb.publish(Bool(data=True)) 
-                
-                if self.active_target_color in self.map_hash:
-                    self.map_hash[self.active_target_color]['status'] = 'solved'
+                miss_count = self.vision_msg_tick - self.last_obj_update_tick
+                if miss_count >= self.drop_miss_threshold:
+                    self.get_logger().info("DROP SUCCESS.")
+                    self.arm_action_done = False
+                    
+                    if self.active_target_color in self.map_hash:
+                        self.map_hash[self.active_target_color]['status'] = 'solved'
 
-                self.cycle_count += 1
-                self.active_target_color = "NONE"
+                    self.cycle_count += 1
+                    self.active_target_color = "NONE"
 
-                if self.cycle_count >= self.max_cycles:
-                    self.get_logger().info('ALL 3 CYCLES COMPLETED. MISSION ACCOMPLISHED.')
-                    raise SystemExit
-                else:
-                    self.transition_to_state(STATE_SEARCH, f"Cycle {self.cycle_count} done! Resuming Search.")
-
+                    if self.cycle_count >= self.max_cycles:
+                        self.get_logger().info('ALL 3 CYCLES COMPLETED. MISSION ACCOMPLISHED.')
+                        raise SystemExit
+                    else:
+                        self.transition_to_state(STATE_SEARCH, f"Cycle {self.cycle_count} done! Resuming Search.")
 
     def transition_to_state(self, new_state, log_msg=""):
+        """
+        Handles state machine transitions, applies the corresponding output control matrix, 
+        and resets tracking variables for the new state.
+        """
         self.current_state = new_state
 
         if log_msg:
@@ -362,6 +232,23 @@ class RobotControlNode(Node):
 
         matrix = self.control_matrix[self.current_state]
         self.pub_nav_explore.publish(Bool(data=matrix["nav_explore"]))
+
+        if new_state in [STATE_MOVE_TO_OBJECT, STATE_MOVE_TO_BOX]:
+            target_type = 'object' if new_state == STATE_MOVE_TO_OBJECT else 'box'
+            
+            # Publish target info ONCE
+            nav_info_msg = String()
+            nav_info_msg.data = f"color:{self.active_target_color},name:{target_type}"
+            self.pub_nav_target_info.publish(nav_info_msg)
+            self.get_logger().info(f"Published task to Nav ONCE: {nav_info_msg.data}")
+
+            # Publish target map pose ONCE
+            entry = (self.map_hash.get(self.active_target_color, {}) or {}).get(target_type)
+            if entry is not None and entry.get('map_pose') is not None:
+                mp = entry['map_pose']
+                mp.header.stamp = self.get_clock().now().to_msg()
+                self.pub_nav_point.publish(mp)
+                self.get_logger().info(f"Published Nav map_pose target ONCE.")
 
         if new_state == STATE_GRASP:
             self.arm_action_done = False
@@ -378,45 +265,58 @@ class RobotControlNode(Node):
             self.arm_action_done = False
 
     def vision_target_callback(self, msg: ObjectTarget):
-        # self.vision_msg_tick += 1 # [MODIFICATION: Already moved to heartbeat]
+        """
+        Processes vision detections. Stores raw camera_link poses, calculates global map 
+        coordinates via TF, and updates FSM pair statuses.
+        """
+        self.vision_msg_tick += 1
+
         color, item_type = msg.color, msg.name
+
         if color != "unknown":
             if color not in self.map_hash:
                 self.map_hash[color] = {'object': {}, 'box': {}, 'status': 'notfound'}
+            
             if item_type not in self.map_hash[color]:
                 self.map_hash[color][item_type] = {}
+
             slot = self.map_hash[color][item_type]
+
             slot['cam_pose'] = {
                 'x': msg.x, 'y': msg.y, 'z': msg.z,
                 'timestamp': self.get_clock().now()
             }
+
             try:
                 pt = PointStamped()
-                pt.header.frame_id = 'd435_link'
+                pt.header.frame_id = 'camera_link'
                 pt.header.stamp = self.get_clock().now().to_msg()
                 pt.point.x, pt.point.y, pt.point.z = msg.x, msg.y, msg.z
-                t = self.tf_buffer.lookup_transform('map', 'd435_link', rclpy.time.Time())
+
+                t = self.tf_buffer.lookup_transform('map', 'camera_link', rclpy.time.Time())
                 map_pt = tf2_geometry_msgs.do_transform_point(pt, t)
+
                 slot['map_pose'] = map_pt
                 slot['timestamp'] = self.get_clock().now()
-            except TransformException as ex:
-                # [MODIFICATION: Optional - Comment out if you want absolute silence, 
-                # but keep it if you want to know if TF breaks.]
-                # self.get_logger().warn(f"[TF EXCEPTION] ...")
-                return 
+            except TransformException as e:
+                # FIXED: Silent TF exceptions are now logged as warnings.
+                self.get_logger().warn(f"TF Transform failed (camera_link -> map): {e}")
+                pass
 
             obj_data = self.map_hash[color].get('object', {})
             box_data = self.map_hash[color].get('box', {})
-            
-
             if obj_data.get('map_pose') is not None and box_data.get('map_pose') is not None:
                 if self.map_hash[color].get('status', 'notfound') == 'notfound':
                     self.map_hash[color]['status'] = 'paired'
-                    #self.get_logger().info(f"[FSM PAIRED] Successfully linked {color.upper()} Object and Box!")
+
             if (color == self.active_target_color) and (item_type == 'object'):
                 self.last_obj_update_tick = self.vision_msg_tick
 
     def trigger_arm_action(self, is_grasp: bool):
+        """
+        Initiates the asynchronous arm sequence (Grasp or Drop). Configures initial 
+        gripper state, publishes the target pose, and schedules the non-blocking wait.
+        """
         target_type = 'object' if is_grasp else 'box'
 
         if is_grasp:
@@ -448,6 +348,10 @@ class RobotControlNode(Node):
         self.arm_timer = self.create_timer(10.0, lambda: self._after_gripper_wait(is_grasp))
     
     def _after_gripper_wait(self, is_grasp: bool):
+        """
+        Callback executed after the main physical movement delay. Finalizes the grasp 
+        action or initiates the drop release and safe retreat sequence.
+        """
         if self.arm_timer:
             self.arm_timer.cancel()
             self.arm_timer = None
@@ -480,6 +384,10 @@ class RobotControlNode(Node):
             self.arm_timer = self.create_timer(3.0, self._final_drop_cleanup)
 
     def _final_drop_cleanup(self):
+        """
+        Final callback in the drop sequence to safely close the gripper after the 
+        arm has released the object and retreated to its initial pose.
+        """
         if self.arm_timer:
             self.arm_timer.cancel()
             self.arm_timer = None
@@ -494,7 +402,16 @@ class RobotControlNode(Node):
         self.check_start_tick = self.vision_msg_tick
 
     def move_feedback_callback(self, msg: Bool):
+        """
+        Listens for navigation success feedback to trigger FSM transitions 
+        towards the next manipulation state (GRASP or DROP).
+        """
+        # FIXED: Prevent infinite deadlock if navigation fails
         if not msg.data:
+            self.get_logger().warn("Navigation failed (msg.data is False)! Marking target as deferred.")
+            if self.active_target_color in self.map_hash:
+                self.map_hash[self.active_target_color]['status'] = 'deferred'
+            self.transition_to_state(STATE_SEARCH, "Nav failure. Resuming Search to avoid deadlock.")
             return
 
         if self.current_state == STATE_MOVE_TO_OBJECT:
@@ -504,11 +421,15 @@ class RobotControlNode(Node):
             self.transition_to_state(STATE_DROP, "Arrived at Box. Initiating Drop Sequence.")
 
     def check_hardware_readiness(self):
+        """
+        Validates that necessary sensors and actuators are online by probing the ROS 2 graph 
+        before commencing the FSM logic.
+        """
         if self.current_state != STATE_INIT:
             self.init_timer.cancel()
             return
 
-        camera_ready = self.count_publishers('/detection_state') > 0 
+        camera_ready = self.count_publishers('/detected_object') > 0 
         nav_ready    = self.count_subscribers('/nav/goal_point') > 0
         arm_ready    = self.count_subscribers('/arm/grasp_pose') > 0
 
@@ -518,6 +439,9 @@ class RobotControlNode(Node):
             self.transition_to_state(STATE_SEARCH, "Commencing Global Patrol.")
 
 def main():
+    """
+    Standard ROS 2 entry point. Initializes and spins the RobotControlNode.
+    """
     rclpy.init()
     node = RobotControlNode()
     try:
