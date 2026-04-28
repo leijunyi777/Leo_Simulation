@@ -8,6 +8,7 @@ install(
     launch
     models
     urdf
+    config
   DESTINATION share/${PROJECT_NAME}
 )
 

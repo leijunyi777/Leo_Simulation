@@ -387,5 +387,53 @@
       <material>Gazebo/DarkGrey</material>
     </gazebo>
 
+    <ros2_control name="ArmControlSystem" type="system">
+      <hardware>
+        <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+      </hardware>
+
+      <joint name="${prefix}g_base_to_joint1">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="${prefix}joint2_to_joint1">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="${prefix}joint3_to_joint2">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="${prefix}joint4_to_joint3">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="${prefix}joint5_to_joint4">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="${prefix}joint6_to_joint5">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="${prefix}joint6output_to_joint6">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+    </ros2_control>
+
+    <gazebo>
+      <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>$(find leo_description)/config/arm_controller.yaml</parameters>
+      </plugin>
+    </gazebo>
+
   </xacro:macro>
 </robot>

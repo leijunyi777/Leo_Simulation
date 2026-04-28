@@ -31,6 +31,7 @@ setup(
     entry_points={
         'console_scripts': [
             "four_wheel_filter = my_robot_sim.four_wheel_filter_node:main",
+            "test_arm_movement = my_robot_sim.test_arm_movement:main",
         ],
     },
 )

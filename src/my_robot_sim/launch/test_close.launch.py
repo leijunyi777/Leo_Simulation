@@ -195,6 +195,29 @@ def generate_launch_description():
         parameters=[ekf_config_path,{'use_sim_time': True}]
     )
 
+    # 引入控制器激活节点
+    load_jsb = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["joint_state_broadcaster"],
+        output="screen",
+    )
+
+    load_arm_ctrl = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["arm_controller"],
+        output="screen",
+    )
+    
+    # 延迟 10 秒唤醒控制器，确保 Gazebo 已经 spawn 完机器人
+    delayed_controllers = TimerAction(
+        period=10.0,
+        actions=[load_jsb, load_arm_ctrl]
+    )
+    
+    # 最后在 return 的 LaunchDescription 里加上 delayed_controllers
+
  
     return LaunchDescription([
         gz_sim,
@@ -209,4 +232,5 @@ def generate_launch_description():
         rviz2_node,
         slam_toolbox_node,
         delayed_nav2,
+        delayed_controllers,
     ])
