@@ -8,7 +8,6 @@
       <child link="${name}_link" />
     </joint>
 
-
     <link name="${name}_link">
       <visual>
         <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/> 
@@ -36,16 +35,19 @@
     <link name="${name}_depth_optical_frame"/>
 
     <gazebo reference="${name}_link">
+      <material>Gazebo/Grey</material> 
       <sensor name="${name}_rgbd" type="rgbd_camera">
         <camera>
-          <horizontal_fov>1.5184</horizontal_fov> <image>
+          <horizontal_fov>1.5184</horizontal_fov> 
+          <image>
             <width>640</width>
             <height>480</height>
             <format>RGB_INT8</format>
           </image>
           <clip>
             <near>0.1</near>
-            <far>10.0</far> </clip>
+            <far>10.0</far> 
+          </clip>
           <noise>
             <type>gaussian</type>
             <mean>0.0</mean>
