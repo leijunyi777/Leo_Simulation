@@ -12,7 +12,7 @@
       <visual>
         <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/> 
         <geometry>
-          <mesh filename="package://leo_description/models/d435.dae" />
+          <mesh filename="package://leo_description/models/d435.stl" />
         </geometry>
       </visual>
       <collision>
