@@ -30,6 +30,7 @@ setup(
             "manipulator_node = robot_control_system.manipulator_node:main",
             "nav_node = robot_control_system.nav_node:main",
             "close_node = robot_control_system.close_node:main",
+            "dummy_manipulator = robot_control_system.dummy_manipulator:main",
             #"tf_sim_node = robot_control_system.tf_sim_node:main",
         ],
     },

@@ -1,47 +1,23 @@
 import os
 from launch import LaunchDescription
-from launch.actions import TimerAction
+from launch.actions import TimerAction, ExecuteProcess
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
     """
     Launch file for starting FSM, Camera, and Nav immediately, 
-    while delaying the Explore Lite node by 5 seconds.
+    delaying the Explore Lite node by 5 seconds, 
+    and automatically publishing a True signal to start exploration after 10 seconds.
     """
-    
     # 你的工作空间包名
     package_name = "robot_control_system"
     
     # [注意] 这里设置为 False 适用于真机，如果是在 Gazebo 仿真环境中运行，请改为 True
-    use_sim_time = False 
+    use_sim_time = True 
     common_params = [{"use_sim_time": use_sim_time}]
 
-    # ==========================================
-    # 第一批：立即启动的节点 (Immediate Nodes)
-    # ==========================================
-    
-    # 1. 状态机主控节点 (FSM Node)
-    fsm_node = Node(
-        package=package_name,
-        executable="robot_fsm",  
-        name="robot_fsm",
-        parameters=common_params,
-        output="screen",
-        emulate_tty=True,
-    )
-
-    # 2. 视觉感知节点 (Camera Node)
-    camera_node = Node(
-        package=package_name,
-        executable="camera_node",  
-        name="camera_node",
-        parameters=common_params,
-        output="screen",
-        emulate_tty=True,
-    )
-
-    # 3. 导航控制节点 (Nav Node)
+    # 1. 导航控制节点 (Nav Node)
     nav_node = Node(
         package=package_name,
         executable="nav_node",  
@@ -52,7 +28,7 @@ def generate_launch_description():
     )
 
     # ==========================================
-    # 第二批：延迟启动的节点 (Delayed Nodes)
+    # 第二批：延迟启动的节点与动作 (Delayed Actions)
     # ==========================================
     
     # 获取 explore_lite 的配置文件路径
@@ -68,18 +44,33 @@ def generate_launch_description():
         output="screen",
     )
 
-    # 使用 TimerAction 包装 explore_node，设置 5 秒的延迟 (period=5.0)
-    delayed_fsm_node = TimerAction(
+    # 【修正】使用 TimerAction 包装 explore_node，延迟 5 秒
+    delayed_explore_node = TimerAction(
         period=5.0,
-        actions=[fsm_node]
+        actions=[explore_node]
     )
 
-    # 返回加载描述，将所有节点（包含被 TimerAction 包装的节点）组合起来
+    # ==========================================
+    # 第三批：延迟发布话题消息触发探索
+    # ==========================================
+    
+    # 定义发布命令行指令：ros2 topic pub --once /nav/cmd_explore std_msgs/msg/Bool "{data: true}"
+    trigger_explore_cmd = ExecuteProcess(
+        cmd=['ros2', 'topic', 'pub', '--once', '/nav/cmd_explore', 'std_msgs/msg/Bool', '{data: true}'],
+        output='screen'
+    )
+
+    # 延迟 10 秒发送该指令 (保证在 nav_node 和 explore_node 都已完全启动后执行)
+    delayed_trigger_cmd = TimerAction(
+        period=10.0,
+        actions=[trigger_explore_cmd]
+    )
+
+    # 返回加载描述，组合所有节点和定时动作
     return LaunchDescription(
         [
-            fsm_node,
-            camera_node,
             nav_node,
-            delayed_fsm_node  # 这里的节点会被自动延迟 5 秒后触发
+            delayed_explore_node,  # 5秒后启动 explore_lite
+            delayed_trigger_cmd    # 10秒后发布 True 触发探索
         ]
     )
