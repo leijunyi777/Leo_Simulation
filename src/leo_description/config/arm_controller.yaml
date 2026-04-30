@@ -9,6 +9,9 @@ controller_manager:
     # 2. 轨迹控制器：负责接收你发的角度指令，驱动 Gazebo 里的虚拟电机
     arm_controller:
       type: joint_trajectory_controller/JointTrajectoryController
+    
+    gripper_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
 
 arm_controller:
   ros__parameters:
@@ -27,6 +30,17 @@ arm_controller:
       - position
       
     # 状态接口：表示我们想从物理引擎读取它们的“位置”和“速度”
+    state_interfaces:
+      - position
+      - velocity
+
+gripper_controller:
+  ros__parameters:
+    # 这里只写主动关节（带 motor 的那个）
+    joints:
+      - arm_gripper_controller
+    command_interfaces:
+      - position
     state_interfaces:
       - position
       - velocity

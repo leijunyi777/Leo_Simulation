@@ -43,7 +43,7 @@
       <xacro:cylinder_inertial mass="0.2" radius="0.03" length="0.06"/>
     </link>
 
-    <joint name="${prefix}g_base_to_joint1" type="revolute">
+    <joint name="${prefix}g_base_to_joint1" type="fixed">
       <axis xyz="0 0 1"/>
       <limit effort="1000.0" lower="-3.14" upper="3.14159" velocity="1.0"/>
       <parent link="${prefix}g_base"/>
