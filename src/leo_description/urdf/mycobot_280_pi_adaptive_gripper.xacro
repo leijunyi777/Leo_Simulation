@@ -392,11 +392,6 @@
         <plugin>gz_ros2_control/GazeboSimSystem</plugin>
       </hardware>
 
-      <joint name="${prefix}g_base_to_joint1">
-        <command_interface name="position"/>
-        <state_interface name="position"/>
-        <state_interface name="velocity"/>
-      </joint>
       <joint name="${prefix}joint2_to_joint1">
         <command_interface name="position"/>
         <state_interface name="position"/>
