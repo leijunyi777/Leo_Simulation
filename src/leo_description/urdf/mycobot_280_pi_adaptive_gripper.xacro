@@ -25,7 +25,7 @@
         <origin xyz="0.0 0 -0.03" rpy="0 0 1.5708"/>
       </visual>
       <collision>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/G_base.dae"/></geometry>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/G_base.dae" scale="0.9 0.9 0.9"/></geometry>
         <origin xyz="0.0 0 -0.03" rpy="0 0 1.5708"/>
       </collision>
       <xacro:cylinder_inertial mass="0.5" radius="0.04" length="0.05"/>
@@ -33,12 +33,12 @@
 
     <link name="${prefix}joint1">
       <visual>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/g_base_simple.stl"/></geometry>
-        <origin xyz="0.0 0 0" rpy="0 0 0"/>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint1.dae"/></geometry>
+        <origin xyz="0.0 0 0" rpy="0 0 -1.5708"/>
       </visual>
       <collision>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/g_base_simple.stl"/></geometry>
-        <origin xyz="0.0 0 0" rpy="0 0 0"/>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint1.dae" scale="0.9 0.9 0.9"/></geometry>
+        <origin xyz="0.0 0 0" rpy="0 0 -1.5708"/>
       </collision>
       <xacro:cylinder_inertial mass="0.2" radius="0.03" length="0.06"/>
     </link>
@@ -58,7 +58,7 @@
         <origin xyz="0.0 0 -0.06096" rpy="0 0 -1.5708"/>
       </visual>
       <collision>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint2.dae"/></geometry>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint2.dae" scale="0.9 0.9 0.9"/></geometry>
         <origin xyz="0.0 0 -0.06096" rpy="0 0 -1.5708"/>
       </collision>
       <xacro:cylinder_inertial mass="0.15" radius="0.02" length="0.1"/>
@@ -67,7 +67,7 @@
     <joint name="${prefix}joint2_to_joint1" type="revolute">
       <axis xyz="0 0 1"/>
       <limit effort="1000.0" lower="-2.9321" upper="2.9321" velocity="1.0"/>
-      <origin xyz="0 0 0.13956" rpy="0 0 0"/>  
+      <origin xyz="0 0 0.13156" rpy="0 0 0"/>  
       <parent link="${prefix}joint1"/>
       <child link="${prefix}joint2"/>
       <dynamics damping="50.0" friction="50.0"/>
@@ -79,7 +79,7 @@
         <origin xyz="0.0 0 0.03256" rpy="0 -1.5708 0"/>
       </visual>
       <collision>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint3.dae"/></geometry>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint3.dae" scale="0.9 0.9 0.9"/></geometry>
         <origin xyz="0.0 0 0.03256" rpy="0 -1.5708 0"/>
       </collision>
       <xacro:cylinder_inertial mass="0.15" radius="0.02" length="0.1"/>
@@ -88,7 +88,7 @@
     <joint name="${prefix}joint3_to_joint2" type="revolute">
       <axis xyz="0 0 1"/>
       <limit effort="1000.0" lower="-2.4434" upper="2.4434" velocity="1.0"/>
-      <origin xyz="0 0 -0.001" rpy="0 1.5708 -1.5708"/>  
+      <origin xyz="0 0 -0.0" rpy="0 1.5708 -1.5708"/>  
       <parent link="${prefix}joint2"/>
       <child link="${prefix}joint3"/>
       <dynamics damping="50.0" friction="50.0"/>
@@ -100,7 +100,7 @@
         <origin xyz="0.0 0 0.03056" rpy="0 -1.5708 0"/>
       </visual>
       <collision>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint4.dae"/></geometry>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint4.dae" scale="0.9 0.9 0.9"/></geometry>
         <origin xyz="0.0 0 0.03056" rpy="0 -1.5708 0"/>
       </collision>
       <xacro:cylinder_inertial mass="0.1" radius="0.02" length="0.05"/>
@@ -117,12 +117,12 @@
 
     <link name="${prefix}joint5">
       <visual>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/J5_simple.stl"/></geometry>
-        <origin xyz="-0.02 0.002 0" rpy="0 0 0"/>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint5.dae"/></geometry>
+        <origin xyz="0.0 0 -0.03356" rpy="-1.5708 0 0"/>
       </visual>
       <collision>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/J5_simple.stl"/></geometry>
-        <origin xyz="-0.02 0.002 0" rpy="0 0 0"/>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint5.dae" scale="0.9 0.9 0.9"/></geometry>
+        <origin xyz="0.0 0 -0.03356" rpy="-1.5708 0 0"/>
       </collision>
       <xacro:cylinder_inertial mass="0.1" radius="0.02" length="0.05"/>
     </link>
@@ -142,7 +142,7 @@
         <origin xyz="0 0.00 -0.038" rpy="0 0 0"/>
       </visual>
       <collision>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint6.dae"/></geometry>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint6.dae" scale="0.9 0.9 0.9"/></geometry>
         <origin xyz="0 0.00 -0.038" rpy="0 0 0"/>
       </collision>
       <xacro:cylinder_inertial mass="0.1" radius="0.02" length="0.04"/>
@@ -153,7 +153,7 @@
       <limit effort="1000.0" lower="-2.7052" upper="2.7925" velocity="1.0"/>
       <parent link="${prefix}joint5"/>
       <child link="${prefix}joint6"/>
-      <origin xyz="0 -0.07318 -0.001" rpy="1.5708 -1.5708 0"/>  
+      <origin xyz="0 -0.07318 -0.0" rpy="1.5708 -1.5708 0"/>  
       <dynamics damping="50.0" friction="50.0"/>
     </joint>
 
@@ -163,7 +163,7 @@
         <origin xyz="0.0 0 -0.012" rpy="0 0 0"/>
       </visual>
       <collision>
-        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint7.dae"/></geometry>
+        <geometry><mesh filename="package://leo_description/models/mycobot_280_pi/joint7.dae" scale="0.9 0.9 0.9"/></geometry>
         <origin xyz="0.0 0 -0.012" rpy="0 0 0"/>
       </collision>
       <xacro:cylinder_inertial mass="0.05" radius="0.015" length="0.01"/>
