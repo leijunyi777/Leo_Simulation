@@ -1,0 +1,10 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: leo_description
+    relative_path: urdf/leo_sim.urdf.xacro
+  srdf:
+    relative_path: config/leo_sim.srdf
+  package_settings:
+    author_name: Junyi.Lei
+    author_email: Junyi.Lei@postgrad.manchester.ac.uk
+    generated_timestamp: 1777595130

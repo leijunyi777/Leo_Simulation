@@ -1,0 +1,26 @@
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+moveit_simple_controller_manager:
+  controller_names:
+    - arm_controller        # <--- 改成你在 Gazebo 里配置的名字
+    - gripper_controller    # <--- 改成你在 Gazebo 里配置的名字
+
+  arm_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      # 注意：去掉了 g_base_to_joint1，因为它是 fixed 的
+      - arm_joint2_to_joint1
+      - arm_joint3_to_joint2
+      - arm_joint4_to_joint3
+      - arm_joint5_to_joint4
+      - arm_joint6_to_joint5
+      - arm_joint6output_to_joint6
+
+  gripper_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - arm_gripper_controller
