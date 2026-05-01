@@ -248,7 +248,6 @@
     <disable_collisions link1="arm_joint6" link2="laser" reason="Never"/>
     <disable_collisions link1="arm_joint6" link2="wheel_RL_link" reason="Never"/>
     <disable_collisions link1="arm_joint6" link2="wheel_RR_link" reason="Never"/>
-    <disable_collisions link1="arm_joint6_flange" link2="laser" reason="Never"/>
     <disable_collisions link1="arm_joint6_flange" link2="wheel_RL_link" reason="Never"/>
     <disable_collisions link1="arm_joint6_flange" link2="wheel_RR_link" reason="Never"/>
     <disable_collisions link1="base_link" link2="camera_link" reason="Adjacent"/>
