@@ -515,7 +515,7 @@ void Explore::sendExploreNavigateGoal(const geometry_msgs::msg::Point& position,
   goal.pose.header.stamp = this->now();
 
   auto send_goal_options =
-      rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions(); # 这里可以添加一个参数，用于指定是否启用ABORT同点朝向重试
+      rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
   send_goal_options.result_callback =
       [this, position](const NavigationGoalHandle::WrappedResult& result) {
         reachedGoal(result, position); 
