@@ -21,9 +21,9 @@
  *    - ratio > 95% → 认为探索率达标 → 发 COMPLETE 并 stop(true)。
  *
  * 4) 物理防卡死看门狗（makePlan 中取到机器人位姿后）
- *    - 若 10s 内位移 < 0.15m 且此前确实发过目标（prev_goal_ 非全零）：判定顶墙/卡住 →
+ *    - 若 5s 内位移 < 0.15m 且此前确实发过目标（prev_goal_ 非全零）：判定顶墙/卡住 →
  *      当前目标入黑名单、async_cancel_all_goals()、清空 prev_goal_ 记忆，本周期 return；
- *      下周期会选其它 frontier。注释里写的“20 秒”与代码 10.0 不一致时以代码为准。
+ *      下周期会选其它 frontier。注释里写的“20 秒”与代码 5.0 不一致时以代码为准。
  *
  * 5) 黑名单与“扫盲”重试
  *    - frontier_blacklist_：abort 的目标、progress_timeout_ 无进展的目标、看门狗拉黑等会加入。
@@ -40,7 +40,12 @@
  *      将当前目标拉黑并递归 makePlan()。
  *    - 若本周期判定与上一目标 same_point（约 1cm 内），直接 return，不打断 Nav2。
  *
- * 8) 结束与回原点
+ * 8) ABORT 同点朝向重试（到达姿态）
+ *    - Nav2 返回 ABORTED 时，不立即拉黑；在同一目标点上顺时针每次旋转 45° 变更 goal 朝向，
+ *      每次间隔 1.5 秒，最多额外尝试 7 个朝向；若仍全部 ABORT 才拉黑并换下一个 frontier。
+ *    - 重试进行期间会跳过 5s 看门狗，避免两个机制互相抢占导致误拉黑。
+ *
+ * 9) 结束与回原点
  *    - stop(finished_exploring)：finished_exploring==true 时不发 PAUSED（仅取消定时器与 goal）；
  *      若 return_to_init_ 且探索正常结束，会再发 RETURNING_TO_ORIGIN 并导航回启动时记录的位姿。
  *
@@ -58,6 +63,9 @@ inline static bool same_point(const geometry_msgs::msg::Point& one,
   double dist = sqrt(dx * dx + dy * dy);
   return dist < 0.01;
 }
+
+// ABORT 后同一点朝向重试步长：每次顺时针 45°（负号在计算 yaw 时体现）。
+inline static constexpr double kAbortYawStepRad = 0.7853981633974483;  // pi / 4
 
 namespace explore
 {
@@ -343,17 +351,20 @@ if (free_cells + unknown_cells > 0) {
     // 移动超过 15cm，说明车还在正常跑，重置看门狗
     watchdog_last_pose_ = pose;
     watchdog_last_time_ = now;
-  } else if (time_elapsed > 10.0) {
-    // 超过 20 秒钟，移动距离不到 15cm，判定为物理撞墙或卡在代价层！
+  } else if (time_elapsed > 5.0 && !abort_yaw_retry_active_) {
+    // 仅在“非 ABORT 朝向重试阶段”启用 5s 看门狗，避免两个机制互相打断。
+    // 超过 5 秒钟，移动距离不到 15cm，判定为物理撞墙或卡在代价层！
     
     // 确保之前确实发过目标（坐标不全为0）
     if (prev_goal_.x != 0.0 || prev_goal_.y != 0.0) {
-      RCLCPP_WARN(logger_, "⚠️ 检测到车辆物理卡死 (10秒未实质移动)！强行放弃并拉黑当前目标！");
+      RCLCPP_WARN(logger_, "⚠️ 检测到车辆物理卡死 (5秒未实质移动)！强行放弃并拉黑当前目标！");
       
       // 拉黑当前一直去不了的目标
       frontier_blacklist_.push_back(prev_goal_);
       
-      // 打断 Nav2，让车马上停下不要再顶墙了
+      // 打断 Nav2，让车马上停下不要再顶墙了。
+      // 先清理 ABORT 重试状态，避免旧定时器后续误发同点重试目标。
+      resetAbortYawRetry();
       move_base_client_->async_cancel_all_goals();
 
       // ==========================================
@@ -376,6 +387,11 @@ if (free_cells + unknown_cells > 0) {
   // =================================================================
 
 
+
+  if (abort_yaw_retry_active_) {
+    // 同点朝向重试进行中：暂停 frontier 重选，等当前重试链给出结果。
+    return;
+  }
 
   auto frontiers = search_.searchFrom(pose.position);
   RCLCPP_DEBUG(logger_, "found %lu frontiers", frontiers.size());
@@ -480,20 +496,76 @@ if (free_cells + unknown_cells > 0) {
   prev_goal_ = target_position;
   prev_goal_cost_ = current_frontier_cost;
 
-  // 7. 发送全新目标给 Nav2
+  // 7. 发送全新目标给 Nav2（默认 yaw = 0）
   RCLCPP_DEBUG(logger_, "Sending goal to move base nav2");
+  sendExploreNavigateGoal(target_position, 0.0);
+}
+
+void Explore::sendExploreNavigateGoal(const geometry_msgs::msg::Point& position,
+                                      double yaw_rad)
+{
+  // 统一在这里把 yaw 转为四元数，保证普通发点与 ABORT 重试发点走同一逻辑。
   auto goal = nav2_msgs::action::NavigateToPose::Goal();
-  goal.pose.pose.position = target_position;
-  goal.pose.pose.orientation.w = 1.;
+  goal.pose.pose.position = position;
+  goal.pose.pose.orientation.x = 0.0;
+  goal.pose.pose.orientation.y = 0.0;
+  goal.pose.pose.orientation.z = std::sin(yaw_rad * 0.5);
+  goal.pose.pose.orientation.w = std::cos(yaw_rad * 0.5);
   goal.pose.header.frame_id = costmap_client_.getGlobalFrameID();
   goal.pose.header.stamp = this->now();
 
-  auto send_goal_options = rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
+  auto send_goal_options =
+      rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions(); # 这里可以添加一个参数，用于指定是否启用ABORT同点朝向重试
   send_goal_options.result_callback =
-      [this, target_position](const NavigationGoalHandle::WrappedResult& result) {
-        reachedGoal(result, target_position);
+      [this, position](const NavigationGoalHandle::WrappedResult& result) {
+        reachedGoal(result, position); 
       };
   move_base_client_->async_send_goal(goal, send_goal_options);
+}
+
+void Explore::resetAbortYawRetry()
+{
+  // 彻底清空重试链：停掉定时器并恢复初始索引。
+  if (abort_yaw_retry_timer_) {
+    abort_yaw_retry_timer_->cancel();
+    abort_yaw_retry_timer_.reset();
+  }
+  abort_yaw_retry_active_ = false;
+  abort_yaw_next_index_ = 1;
+}
+
+void Explore::scheduleAbortYawRetryTimer()
+{
+  if (abort_yaw_retry_timer_) {
+    abort_yaw_retry_timer_->cancel();
+    abort_yaw_retry_timer_.reset();
+  }
+
+  abort_yaw_retry_timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(1500), [this]() {
+        // 若外部（stop/cancel/success）已经终止重试链，直接清理退出。
+        if (!abort_yaw_retry_active_) {
+          resetAbortYawRetry();
+          return;
+        }
+
+        int retry_index = abort_yaw_next_index_;
+        if (retry_index < 1 || retry_index > 7) {
+          abort_yaw_retry_timer_->cancel();
+          abort_yaw_retry_timer_.reset();
+          return;
+        }
+
+        const double retry_yaw = -static_cast<double>(retry_index) * kAbortYawStepRad;
+        RCLCPP_INFO(logger_,
+                    "ABORT recovery: retry same goal yaw step %d/7 (%.2f deg)",
+                    retry_index, retry_yaw * 180.0 / 3.14159265358979323846);
+
+        // 一次性定时器：本次只发一个朝向，下一次由新的 ABORT 回调再安排。
+        abort_yaw_retry_timer_->cancel();
+        abort_yaw_retry_timer_.reset();
+        sendExploreNavigateGoal(abort_yaw_retry_position_, retry_yaw);
+      });
 }
 
 void Explore::returnToInitialPose()
@@ -546,17 +618,45 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
   switch (result.code) {
     case rclcpp_action::ResultCode::SUCCEEDED:
       RCLCPP_DEBUG(logger_, "Goal was successful");
+      // 一旦成功，立即结束任何未完成的同点朝向重试链。
+      resetAbortYawRetry();
       break;
-    case rclcpp_action::ResultCode::ABORTED:
-      RCLCPP_DEBUG(logger_, "Goal was aborted");
-      frontier_blacklist_.push_back(frontier_goal);
-      RCLCPP_DEBUG(logger_, "Adding current goal to black list");
-      // If it was aborted probably because we've found another frontier goal,
-      // so just return and don't make plan again
+    case rclcpp_action::ResultCode::ABORTED: {
+      RCLCPP_WARN(logger_, "Goal was aborted");
+
+      if (abort_yaw_retry_active_) {
+        if (same_point(frontier_goal, abort_yaw_retry_position_)) {
+          // 同一目标点再次 ABORT：推进到下一个朝向重试。
+          abort_yaw_next_index_++;
+          if (abort_yaw_next_index_ > 7) {
+            RCLCPP_WARN(logger_,
+                        "ABORT recovery exhausted 7 yaw retries, blacklisting goal");
+            // 8 个朝向（初始 + 7 次重试）都失败：拉黑该点并转下一 frontier。
+            frontier_blacklist_.push_back(abort_yaw_retry_position_);
+            resetAbortYawRetry();
+            makePlan();
+            return;
+          }
+          scheduleAbortYawRetryTimer();
+          return;
+        }
+
+        // 异常保护：若回调目标点不一致，重置旧重试链并以当前 ABORT 点重新开始。
+        resetAbortYawRetry();
+      }
+
+      // 首次 ABORT：进入同点朝向重试链（第 1 步对应 -45°）。
+      abort_yaw_retry_active_ = true;
+      abort_yaw_retry_position_ = frontier_goal;
+      abort_yaw_next_index_ = 1;
+      scheduleAbortYawRetryTimer();
       return;
+    }
     case rclcpp_action::ResultCode::CANCELED:
       RCLCPP_DEBUG(logger_, "Goal was canceled");
       // If goal canceled might be because exploration stopped from topic. Don't make new plan.
+      // 被外部打断时务必清理重试链，避免 timer 残留。
+      resetAbortYawRetry();
       return;
     default:
       RCLCPP_WARN(logger_, "Unknown result code from move base nav2");
@@ -594,6 +694,8 @@ void Explore::stop(bool finished_exploring)
     status_pub_->publish(status_msg);
   }
   
+  // stop() 覆盖手动暂停、FSM 打断和探索结束收尾，统一清理重试链。
+  resetAbortYawRetry();
   move_base_client_->async_cancel_all_goals();
   exploring_timer_->cancel();
 

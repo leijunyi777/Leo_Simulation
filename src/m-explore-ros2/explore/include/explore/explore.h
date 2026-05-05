@@ -97,6 +97,13 @@ private:
       const std::vector<frontier_exploration::Frontier>& frontiers);
 
   bool goalOnBlacklist(const geometry_msgs::msg::Point& goal);
+  // 统一封装探索目标发送：同一点可只改朝向（yaw）进行重试。
+  void sendExploreNavigateGoal(const geometry_msgs::msg::Point& position,
+                               double yaw_rad);
+  // 清理 ABORT 朝向重试状态与定时器（在 stop/cancel/success 等路径复用）。
+  void resetAbortYawRetry();
+  // 触发下一次 ABORT 同点朝向重试定时器（1.5s）。
+  void scheduleAbortYawRetryTimer();
 
   NavigationGoalHandle::SharedPtr navigation_goal_handle_;
   // void
@@ -144,6 +151,14 @@ private:
   geometry_msgs::msg::Pose watchdog_last_pose_;
   rclcpp::Time watchdog_last_time_;
   bool watchdog_initialized_ = false;
+  // ABORT 同点朝向重试状态：true 表示正在同一目标点做 45° 旋转重试链。
+  bool abort_yaw_retry_active_ = false;
+  // 当前正在重试的“同一目标点”坐标。
+  geometry_msgs::msg::Point abort_yaw_retry_position_;
+  // 下一个待重试的朝向序号（1..7，对应 -45°..-315°）。
+  int abort_yaw_next_index_ = 1;
+  // 同点朝向重试的一次性定时器。
+  rclcpp::TimerBase::SharedPtr abort_yaw_retry_timer_;
 
   // parameters
   double planner_frequency_;
