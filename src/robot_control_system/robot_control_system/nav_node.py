@@ -68,10 +68,10 @@ class NavControllerNode(Node):
 
         # 初始化 Nav2 动作客户端 / Init Nav2 Action Client
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.get_logger().info('等待 Nav2 动作服务端就绪... / Waiting for Nav2 Action Server...')
+        self.get_logger().info('[Init] Waiting for Nav2 Action Server...')
         while not self.nav_client.wait_for_server(timeout_sec=2.0):
             pass
-        self.get_logger().info('Nav2 服务端已连接！/ Nav2 Server Connected!') 
+        self.get_logger().info('[Init] Nav2 Server Connected!') 
 
         # --- 订阅与发布设置 / Pub & Sub Setup ---
         # 导航相关 / Navigation related
@@ -122,9 +122,9 @@ class NavControllerNode(Node):
                     self.active_task_color = part.split(':')[1]
                 elif part.startswith('name:'):
                     self.active_task_name = part.split(':')[1]
-            self.get_logger().info(f"【锁定任务】当前追踪目标更新为 -> 颜色: {self.active_task_color}, 类别: {self.active_task_name}")
+            self.get_logger().info(f"[Task Locked] Target updated -> Color: {self.active_task_color}, Class: {self.active_task_name}")
         except Exception as e:
-            self.get_logger().warn(f"解析 /nav/target_info 失败: {e}, 收到内容: {msg.data}")
+            self.get_logger().warn(f"[Parse Error] Failed to parse /nav/target_info: {e}, received: {msg.data}")
 
     def get_quaternion_from_a_to_b(self, a_pos: tuple, b_pos: tuple) -> Quaternion:
         dx, dy = b_pos[0] - a_pos[0], b_pos[1] - a_pos[1]
@@ -143,6 +143,22 @@ class NavControllerNode(Node):
         if 0 <= cm_x < info.width and 0 <= cm_y < info.height:
             return self.latest_costmap.data[cm_y * info.width + cm_x]
         return 255
+
+    # ==========================================================================
+    # 辅助功能 / Auxiliary Functions
+    # ==========================================================================
+    def cancel_current_nav_goal(self):
+        """
+        无论处于什么状态，强制取消当前的 Nav2 任务目标 
+        Force cancel the current Nav2 goal regardless of its state
+        """
+        if self.goal_handle is not None:
+            self.get_logger().info("[Nav2] Canceling current goal before sending a new task.")
+            try:
+                self.goal_handle.cancel_goal_async()
+            except Exception:
+                pass
+            self.goal_handle = None
 
     # ==========================================================================
     # 探索与 FSM 指令响应 / Exploration & Command Response
@@ -167,8 +183,7 @@ class NavControllerNode(Node):
             if self.nav_mode == "EXPLORE":
                 self.nav_mode = "IDLE"
             self.pub_explore_resume.publish(Bool(data=False))
-            if self.goal_handle:
-                self.goal_handle.cancel_goal_async()
+            self.cancel_current_nav_goal()
 
     def explore_status_cb(self, msg: ExploreStatus):
         if msg.status in [ExploreStatus.EXPLORATION_COMPLETE, ExploreStatus.RETURNED_TO_ORIGIN]:
@@ -204,13 +219,13 @@ class NavControllerNode(Node):
 
         if self.target_phase == "OBJECT":
             self.nav_mode = "GOTO_OBJECT"
-            self.get_logger().info("【Nav2】基于 Costmap 计算前往物体的安全预备点...")
+            self.get_logger().info("[Nav2] Calculating safe staging point for object based on Costmap...")
             self._execute_smart_standoff_nav(tx, ty)
         else:
             if self.nav_mode not in ["GOTO_BOX_ORIGIN", "GOTO_BOX_TARGET"]:
                 self.nav_mode = "GOTO_BOX_ORIGIN"
                 self.pending_box_x, self.pending_box_y = tx, ty
-                self.get_logger().info("【Nav2】前往放置：先退回(0,0)原点开阔处")
+                self.get_logger().info("[Nav2] Moving to drop-off: Retreating to origin (0.0, 0.0) first...")
                 q_origin = Quaternion()
                 q_origin.z, q_origin.w = math.sin(math.pi / 2.0), math.cos(math.pi / 2.0)
                 self.send_nav_goal(0.0, 0.0, q_origin)
@@ -218,7 +233,7 @@ class NavControllerNode(Node):
                 self.pending_box_x, self.pending_box_y = tx, ty
             elif self.nav_mode == "GOTO_BOX_TARGET":
                 self.pending_box_x, self.pending_box_y = tx, ty
-                self.get_logger().info("【Nav2】基于 Costmap 计算前往放置框的安全预备点...")
+                self.get_logger().info("[Nav2] Calculating safe staging point for box based on Costmap...")
                 self._execute_smart_standoff_nav(tx, ty)
 
     def _execute_smart_standoff_nav(self, tx, ty):
@@ -226,7 +241,7 @@ class NavControllerNode(Node):
         以目标点为中心生成12个候选点(距离0.5m)，根据代价地图选取最优停靠点。
         """
         if self.current_pose is None or self.latest_costmap is None:
-            self.get_logger().warn("缺乏位姿或代价地图，使用备用直线停靠！")
+            self.get_logger().warn("[Warn] Missing pose or costmap, using fallback linear standoff!")
             rx, ry = self.current_pose if self.current_pose else (0.0, 0.0)
             yaw = math.atan2(ty - ry, tx - rx)
             best_x = tx - self.standoff_dist * math.cos(yaw)
@@ -253,7 +268,7 @@ class NavControllerNode(Node):
                     best_x, best_y = px, py
             
             if min_cost >= 253:
-                self.get_logger().warn("警告：周围 0.5m 预备点均位于致命障碍物中！")
+                self.get_logger().warn("[Warn] All staging points within 0.5m are in lethal obstacles!")
 
         # 让机器人抵达后正对目标
         q_facing_target = self.get_quaternion_from_a_to_b((best_x, best_y), (tx, ty))
@@ -277,17 +292,18 @@ class NavControllerNode(Node):
         return None
 
     def dispatch_random_goal(self):
-        if self.goal_handle:
-            self.goal_handle.cancel_goal_async()
-            self.goal_handle = None
+        self.cancel_current_nav_goal()
         target = self.get_random_free_point()
         if target is None or self.current_pose is None:
             self.create_timer(1.0, self.dispatch_random_goal)
             return
+        
+        self.get_logger().info(f"[Explore] Dispatching random goal to: x={target[0]:.2f}, y={target[1]:.2f}")
         q_facing_target = self.get_quaternion_from_a_to_b(self.current_pose, target)
         self.send_nav_goal(target[0], target[1], q_facing_target)
 
     def send_nav_goal(self, x: float, y: float, orientation_q: Quaternion):
+        self.cancel_current_nav_goal() # 在发送新目标前，保证彻底取消旧目标
         pose = PoseStamped()
         pose.header.frame_id = 'map'
         pose.header.stamp = self.get_clock().now().to_msg()
@@ -311,17 +327,17 @@ class NavControllerNode(Node):
 
         if status == GoalStatus.STATUS_SUCCEEDED:
             if self.nav_mode == "GOTO_OBJECT":
-                self.get_logger().info("【Nav2完成】到达预备点，启动视觉接近 -> APPROACH_OBJECT")
+                self.get_logger().info("[Nav2 Complete] Reached staging point, starting visual approach -> APPROACH_OBJECT")
                 self.nav_mode = "APPROACH_OBJECT"
                 self.start_approach_sequence()
                 
             elif self.nav_mode == "GOTO_BOX_ORIGIN":
-                self.get_logger().info("【Nav2完成】已到达(0,0)，继续前往放置预备点")
+                self.get_logger().info("[Nav2 Complete] Reached origin (0.0, 0.0), continuing to drop-off staging point")
                 self.nav_mode = "GOTO_BOX_TARGET"
                 self._execute_smart_standoff_nav(self.pending_box_x, self.pending_box_y)
                 
             elif self.nav_mode == "GOTO_BOX_TARGET":
-                self.get_logger().info("【Nav2完成】到达放置预备点，启动视觉接近 -> APPROACH_BOX")
+                self.get_logger().info("[Nav2 Complete] Reached drop-off staging point, starting visual approach -> APPROACH_BOX")
                 self.nav_mode = "APPROACH_BOX"
                 self.start_approach_sequence()
 
@@ -383,7 +399,7 @@ class NavControllerNode(Node):
         distance_error = math.hypot(error_x, error_z)
         
         if distance_error < 0.01:
-            self.get_logger().info(f'【接近完成】位置误差 {distance_error:.3f}m，通知主控节点。')
+            self.get_logger().info(f'[Approach Complete] Position error {distance_error:.3f}m, notifying main controller.')
             self.pub_fb.publish(Bool(data=True)) # 彻底完成，交给 FSM
             
             # 状态交接
@@ -421,7 +437,7 @@ class NavControllerNode(Node):
         
         if time_since_last_msg > self.timeout_sec:
             self.pub_cmd_vel.publish(Twist())
-            self.get_logger().warn('【接近看门狗】丢失视觉目标！发送急停指令。', throttle_duration_sec=2.0)
+            self.get_logger().warn('[Watchdog] Visual target lost! Sending emergency stop command.', throttle_duration_sec=2.0)
             self.prev_error_x = 0.0
             self.prev_error_z = 0.0
             self.prev_time = current_time

@@ -90,7 +90,7 @@ controller_server:
       CostCritic:                      # 远离障碍物的裁判
         enabled: true
         cost_power: 1
-        cost_weight: 0.2
+        cost_weight: 5.0
         critical_cost: 254.0
         consider_footprint: true
         collision_cost: 1000000.0
@@ -219,8 +219,8 @@ local_costmap:
           
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 15.0    # [修改] 从 3.0 提高到 8.0（值越大，墙壁的推力衰减越快）
-        inflation_radius: 0.4      # 已修改为 0.3
+        cost_scaling_factor: 2.0    # [修改] 从 3.0 提高到 8.0（值越大，墙壁的推力衰减越快）
+        inflation_radius: 0.5      # 已修改为 0.3
 
 # -------------------------------------------------------------------------
 # 5. 全局代价地图 (Global Costmap)
