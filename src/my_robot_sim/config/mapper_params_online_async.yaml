@@ -79,4 +79,4 @@ slam_toolbox:
     minimum_distance_penalty: 0.3                     # 基础距离惩罚系数
     use_response_expansion: true                      # 匹配得分不高时，是否允许算法动态扩大搜索范围
     min_pass_through: 2                               # 激光射线穿过同一个空白网格2次，才将其确认为空闲(Free)
-    occupancy_threshold: 0.4                          # 占用概率阈值 (算法算出大于0.1则在地图上画黑色的障碍物)
+    occupancy_threshold: 0.15                          # 占用概率阈值 (算法算出大于0.1则在地图上画黑色的障碍物)

@@ -51,13 +51,13 @@ controller_server:
       plugin: "nav2_mppi_controller::MPPIController"
       time_steps: 30                   # 预测未来步数
       model_dt: 0.1                   # 每步时间间隔 (56 * 0.05 = 预测未来 2.8 秒)
-      batch_size: 1500                 # [算力关键] 每次采样 2000 条轨迹 (如果 CPU 卡顿可降为 1000)
+      batch_size: 3000                 # [算力关键] 每次采样 2000 条轨迹 (如果 CPU 卡顿可降为 1000)
       
       # --- 运动学模型配置 ---
       motion_model: "DiffDrive"        # 明确差速底盘模型
-      vx_std: 0.15                      # 线速度采样的标准差 (探索范围)
+      vx_std: 0.25                      # 线速度采样的标准差 (探索范围)
       vy_std: 0.0                      # 差速车没有横向移动
-      wz_std: 0.15                      # 角速度采样的标准差
+      wz_std: 0.25                      # 角速度采样的标准差
       
       vx_max: 0.2                      # 最高前进速度
       vx_min: -0.2                    # [关键] 最低倒车速度，允许 MPPI 采样倒车轨迹！
@@ -68,7 +68,7 @@ controller_server:
       iteration_count: 1               # 优化的迭代次数
       prune_distance: 1.7              # 裁剪掉离机器人过远的路径点
       transform_tolerance: 1.0
-      temperature: 0.1                 # 随机采样的温度参数 (越小越相信最优解，越大越鼓励探索)
+      temperature: 0.2                 # 随机采样的温度参数 (越小越相信最优解，越大越鼓励探索)
       gamma: 0.015
       visualize: false                  # [强烈建议] 开启 RViz 里的彩色轨迹簇显示
       
@@ -219,7 +219,7 @@ local_costmap:
           
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 2.0    # [修改] 从 3.0 提高到 8.0（值越大，墙壁的推力衰减越快）
+        cost_scaling_factor: 8.0    # [修改] 从 3.0 提高到 8.0（值越大，墙壁的推力衰减越快）
         inflation_radius: 0.5      # 已修改为 0.3
 
 # -------------------------------------------------------------------------
