@@ -25,8 +25,9 @@ class TargetFollowerNode(Node):
         self.kp_angular = 0.5
         self.kd_angular = 0.1
         
-        self.prev_error_x = 0.0
-        self.prev_error_z = 0.0
+        # 状态变量重命名以匹配新的坐标系逻辑
+        self.prev_error_forward = 0.0  # 原来的 prev_error_z
+        self.prev_error_lateral = 0.0  # 原来的 prev_error_x
         self.prev_time = self.get_clock().now()
         
         # --- 3. 超时安全机制 (Watchdog) ---
@@ -48,34 +49,37 @@ class TargetFollowerNode(Node):
         if dt <= 0:
             dt = 0.001  # 防止除以零
 
-        # 1. 计算误差 (期望 Z=0.325, 期望 X=0)
-        error_x = msg.x - 0.0
-        error_z = msg.z - 0.325
+        # 1. 计算误差 (新坐标系：X向前，Y向左)
+        # 期望距离前方 0.325m (X轴)，期望横向居中 0m (Y轴)
+        error_forward = msg.x - 0.175
+        error_lateral = msg.y - 0.0
 
-        # 2. 判断停止条件 (位置误差 < 0.1m)
-        distance_error = math.hypot(error_x, error_z)
+        # 2. 判断停止条件 (位置误差 < 0.01m)
+        distance_error = math.hypot(error_forward, error_lateral)
         if distance_error < 0.01:
             self.get_logger().info('位置误差小于 0.01m，到达目标，停止运动。', throttle_duration_sec=1.0)
             self.prev_time = current_time
             return cmd  # 返回全 0 指令
 
         # 3. PD 计算
-        # -- 前后速度 (Z轴) --
-        deriv_z = (error_z - self.prev_error_z) / dt
-        linear_output = (self.kp_linear * error_z) + (self.kd_linear * deriv_z)
+        # -- 前后速度 (X轴误差控制 linear.x) --
+        deriv_forward = (error_forward - self.prev_error_forward) / dt
+        linear_output = (self.kp_linear * error_forward) + (self.kd_linear * deriv_forward)
 
-        # -- 旋转速度 (X轴) --
-        deriv_x = (error_x - self.prev_error_x) / dt
-        angular_output = (self.kp_angular * error_x) + (self.kd_angular * deriv_x)
+        # -- 旋转速度 (Y轴误差控制 angular.z) --
+        deriv_lateral = (error_lateral - self.prev_error_lateral) / dt
+        angular_output = (self.kp_angular * error_lateral) + (self.kd_angular * deriv_lateral)
 
         # 4. 限幅与方向映射
-        # X->right, 小车向右转 angular.z 需为负
+        # X轴正向代表前方，直接输出即可
         cmd.linear.x = max(-0.1, min(0.1, linear_output))
-        cmd.angular.z = max(-0.1, min(0.1, -angular_output))
+        
+        # Y轴正向代表左方，ROS标准中 angular.z 正向也是左转(逆时针)，因此不需要再加负号反转了
+        cmd.angular.z = max(-0.1, min(0.1, angular_output))
 
         # 5. 更新状态
-        self.prev_error_z = error_z
-        self.prev_error_x = error_x
+        self.prev_error_forward = error_forward
+        self.prev_error_lateral = error_lateral
         self.prev_time = current_time
 
         return cmd
@@ -84,10 +88,8 @@ class TargetFollowerNode(Node):
         """
         收到目标消息的回调函数 (期望频率 10Hz)
         """
-        # 刷新最后收到消息的时间戳
         self.last_msg_time = self.get_clock().now()
         
-        # 计算并发送速度指令
         cmd_vel_msg = self.calculate_pd_command(msg)
         self.pub_cmd.publish(cmd_vel_msg)
 
@@ -98,19 +100,14 @@ class TargetFollowerNode(Node):
         current_time = self.get_clock().now()
         time_since_last_msg = (current_time - self.last_msg_time).nanoseconds / 1e9
         
-        # 如果超过 0.5s 没有更新坐标
         if time_since_last_msg > self.timeout_sec:
-            # 发送急停指令 (全 0)
             stop_cmd = Twist()
             self.pub_cmd.publish(stop_cmd)
             
-            # 使用 throttle 避免日志刷屏，每秒最多打印一次
             self.get_logger().warn('超过 0.5s 未收到目标更新，发送 0 速度急停！', throttle_duration_sec=1.0)
             
-            # 【关键】重置 PD 状态和时间
-            # 防止目标重新出现时，dt 过大或误差跳变导致微分项 (D) 出现极端的输出脉冲
-            self.prev_error_x = 0.0
-            self.prev_error_z = 0.0
+            self.prev_error_forward = 0.0
+            self.prev_error_lateral = 0.0
             self.prev_time = current_time
 
 def main(args=None):

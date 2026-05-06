@@ -45,22 +45,22 @@
 
 
 # ====== RealSense D435 RGB 彩色图像 ======
-- ros_topic_name: "/d435/color/image_raw"
-  gz_topic_name: "/d435/image"
+- ros_topic_name: "/camera/color/image_raw"
+  gz_topic_name: "/camera/image"
   ros_type_name: "sensor_msgs/msg/Image"
   gz_type_name: "gz.msgs.Image"
   direction: GZ_TO_ROS
 
 # ====== RealSense D435 深度图像 ======
-- ros_topic_name: "/d435/depth/image_raw"
-  gz_topic_name: "/d435/depth_image"
+- ros_topic_name: "/camera/depth/image_raw"
+  gz_topic_name: "/camera/depth_image"
   ros_type_name: "sensor_msgs/msg/Image"
   gz_type_name: "gz.msgs.Image"
   direction: GZ_TO_ROS
 
 # ====== RealSense D435 3D 点云 ======
-- ros_topic_name: "/d435/depth/color/points"
-  gz_topic_name: "/d435/points"
+- ros_topic_name: "/camera/depth/color/points"
+  gz_topic_name: "/camera/points"
   ros_type_name: "sensor_msgs/msg/PointCloud2"
   gz_type_name: "gz.msgs.PointCloudPacked"
   direction: GZ_TO_ROS

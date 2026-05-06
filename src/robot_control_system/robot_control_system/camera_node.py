@@ -1,7 +1,6 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
-from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image
 from my_robot_interfaces.msg import ObjectTarget
 
@@ -11,7 +10,6 @@ import message_filters
 from ultralytics import YOLO
 import os
 from ament_index_python.packages import get_package_share_directory
-import math
 
 class VisionNodeSim(Node):
     def __init__(self):
@@ -25,7 +23,7 @@ class VisionNodeSim(Node):
         pkg_path = get_package_share_directory('robot_control_system')
         
         # ----------------------------
-        # 已更新: 使用最新的 model3.pt
+        # 使用最新的 model3.pt
         # ----------------------------
         model_path = os.path.join(pkg_path, 'model3.pt')
         self.get_logger().info(f"Loading model from: {model_path}")
@@ -40,16 +38,15 @@ class VisionNodeSim(Node):
         self.cy = 240.0
 
         # ROS 2 Subscribers (Syncing Color and Depth)
-        self.color_sub = message_filters.Subscriber(self, Image, '/d435/color/image_raw')
-        self.depth_sub = message_filters.Subscriber(self, Image, '/d435/depth/image_raw')
+        # 根据提供的信息修改了对应的话题名称
+        self.color_sub = message_filters.Subscriber(self, Image, '/camera/color/image_raw')
+        self.depth_sub = message_filters.Subscriber(self, Image, '/camera/depth/image_raw')
         
         self.ts = message_filters.ApproximateTimeSynchronizer(
             [self.color_sub, self.depth_sub], queue_size=10, slop=0.1
         )
         self.ts.registerCallback(self.image_callback)
         self.get_logger().info("Simulation Vision Node Initialized. Waiting for Gazebo images...")
-
-        # 取消了单一最新消息的 timer 机制，改为直接在 callback 内发布，与真实相机逻辑保持一致。
 
     def image_callback(self, color_msg, depth_msg):
         # ==========================================================
@@ -133,21 +130,42 @@ class VisionNodeSim(Node):
             
             depth = float(np.median(depth_roi[valid_mask]))
 
+            # --- 深度过滤校验 ---
             if depth <= 0.0:
                 continue
 
-            # --- 3. 坐标投影与发布 ---
-            # 移除了额外的 depth_offset，使坐标转换与 camera_node.py 保持完全同步
-            X = (u - self.cx) / self.fx * depth
-            Y = (v - self.cy) / self.fy * depth
-            Z = depth
+            # 同步实机：全局距离大于0.8丢弃
+            if depth > 0.8:
+                continue
+
+            # 新增逻辑：当box识别距离大于0.6时为非法数据，丢弃不输出
+            if name == "box" and depth > 0.6:
+                continue
+
+            # --- 3. 坐标投影与转换 ---
+            # 首先计算相机光学坐标系 (Optical Frame): Z向前, X向右, Y向下
+            X_cam = (u - self.cx) / self.fx * depth
+            Y_cam = (v - self.cy) / self.fy * depth
+            Z_cam = depth
+
+            # 同步实机逻辑: 对于 box 调整中心偏移 (13cm)
+            if name == "box":
+                Z_cam -= 0.13  
+
+            # 坐标转换：从光学坐标系转换至标准ROS机体坐标系 (Base Frame): X向前, Y向左, Z向上
+            # 原Z轴(前) -> 现X轴
+            # 原X轴(右) -> 现Y轴(左，所以取反)
+            # 原Y轴(下) -> 现Z轴(上，所以取反)
+            X_ros = Z_cam
+            Y_ros = -X_cam
+            Z_ros = -Y_cam
 
             msg = ObjectTarget()
             msg.name = name
             msg.color = color
-            msg.x = float(X)
-            msg.y = float(Y)
-            msg.z = float(Z)
+            msg.x = float(X_ros)
+            msg.y = float(Y_ros)
+            msg.z = float(Z_ros)
             
             # 循环内直接发布，支持多个物体
             self.pub_detected.publish(msg)
