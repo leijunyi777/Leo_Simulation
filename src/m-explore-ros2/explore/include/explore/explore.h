@@ -45,6 +45,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <explore_lite_msgs/msg/explore_status.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -99,7 +100,8 @@ private:
   bool goalOnBlacklist(const geometry_msgs::msg::Point& goal);
   // 统一封装探索目标发送：同一点可只改朝向（yaw）进行重试。
   void sendExploreNavigateGoal(const geometry_msgs::msg::Point& position,
-                               double yaw_rad);
+                               double yaw_rad,
+                               uint64_t retry_session_id);
   // 清理 ABORT 朝向重试状态与定时器（在 stop/cancel/success 等路径复用）。
   void resetAbortYawRetry();
   // 触发下一次 ABORT 同点朝向重试定时器（1.5s）。
@@ -110,7 +112,8 @@ private:
   // goal_response_callback(std::shared_future<NavigationGoalHandle::SharedPtr>
   // future);
   void reachedGoal(const NavigationGoalHandle::WrappedResult& result,
-                   const geometry_msgs::msg::Point& frontier_goal);
+                   const geometry_msgs::msg::Point& frontier_goal,
+                   uint64_t callback_retry_session_id);
 
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       marker_array_publisher_;
@@ -159,6 +162,10 @@ private:
   int abort_yaw_next_index_ = 1;
   // 同点朝向重试的一次性定时器。
   rclcpp::TimerBase::SharedPtr abort_yaw_retry_timer_;
+  // ABORT 朝向重试链会话号：用于过滤过期回调，避免旧 goal 回调污染当前重试状态。
+  uint64_t abort_yaw_retry_session_id_ = 0;
+  // 标记当前是否处于外部 stop/shutdown 引发的取消流程。
+  bool nav_stop_in_progress_ = false;
 
   // parameters
   double planner_frequency_;

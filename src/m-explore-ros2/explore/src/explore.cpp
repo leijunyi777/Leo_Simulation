@@ -498,11 +498,12 @@ if (free_cells + unknown_cells > 0) {
 
   // 7. 发送全新目标给 Nav2（默认 yaw = 0）
   RCLCPP_DEBUG(logger_, "Sending goal to move base nav2");
-  sendExploreNavigateGoal(target_position, 0.0);
+  sendExploreNavigateGoal(target_position, 0.0, 0);
 }
 
 void Explore::sendExploreNavigateGoal(const geometry_msgs::msg::Point& position,
-                                      double yaw_rad)
+                                      double yaw_rad,
+                                      uint64_t retry_session_id)
 {
   // 统一在这里把 yaw 转为四元数，保证普通发点与 ABORT 重试发点走同一逻辑。
   auto goal = nav2_msgs::action::NavigateToPose::Goal();
@@ -517,8 +518,8 @@ void Explore::sendExploreNavigateGoal(const geometry_msgs::msg::Point& position,
   auto send_goal_options =
       rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions();
   send_goal_options.result_callback =
-      [this, position](const NavigationGoalHandle::WrappedResult& result) {
-        reachedGoal(result, position); 
+      [this, position, retry_session_id](const NavigationGoalHandle::WrappedResult& result) {
+        reachedGoal(result, position, retry_session_id); 
       };
   move_base_client_->async_send_goal(goal, send_goal_options);
 }
@@ -532,6 +533,11 @@ void Explore::resetAbortYawRetry()
   }
   abort_yaw_retry_active_ = false;
   abort_yaw_next_index_ = 1;
+  // 每次重置都推进会话号，确保后续收到的旧 goal 回调能被识别为过期并忽略。
+  abort_yaw_retry_session_id_++;
+  if (abort_yaw_retry_session_id_ == 0) {
+    abort_yaw_retry_session_id_ = 1;
+  }
 }
 
 void Explore::scheduleAbortYawRetryTimer()
@@ -564,7 +570,8 @@ void Explore::scheduleAbortYawRetryTimer()
         // 一次性定时器：本次只发一个朝向，下一次由新的 ABORT 回调再安排。
         abort_yaw_retry_timer_->cancel();
         abort_yaw_retry_timer_.reset();
-        sendExploreNavigateGoal(abort_yaw_retry_position_, retry_yaw);
+        sendExploreNavigateGoal(abort_yaw_retry_position_, retry_yaw,
+                                abort_yaw_retry_session_id_);
       });
 }
 
@@ -613,8 +620,18 @@ bool Explore::goalOnBlacklist(const geometry_msgs::msg::Point& goal)
 }
 
 void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
-                          const geometry_msgs::msg::Point& frontier_goal)
+                          const geometry_msgs::msg::Point& frontier_goal,
+                          uint64_t callback_retry_session_id)
 {
+  if (callback_retry_session_id != 0 &&
+      callback_retry_session_id != abort_yaw_retry_session_id_) {
+    RCLCPP_WARN(logger_,
+                "Ignoring stale retry callback session=%lu current=%lu",
+                static_cast<unsigned long>(callback_retry_session_id),
+                static_cast<unsigned long>(abort_yaw_retry_session_id_));
+    return;
+  }
+
   switch (result.code) {
     case rclcpp_action::ResultCode::SUCCEEDED:
       RCLCPP_DEBUG(logger_, "Goal was successful");
@@ -641,22 +658,49 @@ void Explore::reachedGoal(const NavigationGoalHandle::WrappedResult& result,
           return;
         }
 
-        // 异常保护：若回调目标点不一致，重置旧重试链并以当前 ABORT 点重新开始。
-        resetAbortYawRetry();
+        // 异常保护：若回调目标点不一致，通常是旧回调乱序到达，忽略避免重置回 1/7。
+        RCLCPP_WARN(logger_,
+                    "Ignoring retry ABORT with mismatched goal point");
+        return;
       }
 
       // 首次 ABORT：进入同点朝向重试链（第 1 步对应 -45°）。
       abort_yaw_retry_active_ = true;
       abort_yaw_retry_position_ = frontier_goal;
       abort_yaw_next_index_ = 1;
+      abort_yaw_retry_session_id_++;
+      if (abort_yaw_retry_session_id_ == 0) {
+        abort_yaw_retry_session_id_ = 1;
+      }
       scheduleAbortYawRetryTimer();
       return;
     }
     case rclcpp_action::ResultCode::CANCELED:
-      RCLCPP_DEBUG(logger_, "Goal was canceled");
+      RCLCPP_WARN(logger_, "Goal was canceled");
       // If goal canceled might be because exploration stopped from topic. Don't make new plan.
-      // 被外部打断时务必清理重试链，避免 timer 残留。
-      resetAbortYawRetry();
+      if (nav_stop_in_progress_) {
+        // 外部 stop/shutdown 触发的取消：按预期清理退出。
+        resetAbortYawRetry();
+        return;
+      }
+
+      if (abort_yaw_retry_active_ &&
+          callback_retry_session_id == abort_yaw_retry_session_id_) {
+        // 重试链里的 cancel（如导航栈内部切换）按“失败一次”处理，继续推进序号。
+        abort_yaw_next_index_++;
+        if (abort_yaw_next_index_ > 7) {
+          RCLCPP_WARN(logger_,
+                      "ABORT recovery exhausted 7 yaw retries after CANCELED, blacklisting goal");
+          frontier_blacklist_.push_back(abort_yaw_retry_position_);
+          resetAbortYawRetry();
+          makePlan();
+          return;
+        }
+        scheduleAbortYawRetryTimer();
+        return;
+      }
+
+      // 非重试链的 cancel（且非 stop 导致）仅记录并忽略，避免误清空当前状态。
       return;
     default:
       RCLCPP_WARN(logger_, "Unknown result code from move base nav2");
@@ -686,6 +730,7 @@ void Explore::start()
 void Explore::stop(bool finished_exploring)
 {
   RCLCPP_INFO(logger_, "Exploration stopped.");
+  nav_stop_in_progress_ = true;
   
   // Only publish paused status if manually stopped (not finished exploring)
   if (!finished_exploring) {
@@ -706,6 +751,7 @@ void Explore::stop(bool finished_exploring)
 
 void Explore::resume()
 {
+  nav_stop_in_progress_ = false;
   resuming_ = true;
   RCLCPP_INFO(logger_, "Exploration resuming.");
   auto status_msg = explore_lite_msgs::msg::ExploreStatus();
