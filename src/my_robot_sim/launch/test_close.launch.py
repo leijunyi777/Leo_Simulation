@@ -69,14 +69,6 @@ def generate_launch_description():
             '-topic', 'robot_description', 
             '-name', 'leo_sim', 
             '-z', '0.02',
-            # ▼▼▼ 修改部分开始：新增机械臂初始关节角度 (站立锁死状态) ▼▼▼
-            '-J', 'arm_joint2_to_joint1', '0.0',
-            '-J', 'arm_joint3_to_joint2', '0.0',
-            '-J', 'arm_joint4_to_joint3', '0.0',
-            '-J', 'arm_joint5_to_joint4', '0.0',
-            '-J', 'arm_joint6_to_joint5', '0.0',
-            '-J', 'arm_joint6output_to_joint6', '0.0'
-            # ▲▲▲ 修改部分结束 ▲▲▲
         ],
         output='screen'
     )
@@ -218,6 +210,25 @@ def generate_launch_description():
     
     # 最后在 return 的 LaunchDescription 里加上 delayed_controllers
 
+    # ================= 新增部分：启动 MoveIt 2 =================
+    # 引入 MoveIt 2 的 move_group
+    move_group_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(get_package_share_directory('mycobot_moveit_config'), 'launch', 'move_group.launch.py')
+        ),
+        launch_arguments={
+            'use_sim_time': 'true'
+        }.items()
+    )
+
+    # 延迟 14 秒启动 MoveIt，确保底层的 controller (10秒启动) 已经准备就绪
+    # 这样可以避免 move_group 报 "Failed to fetch current robot state" 的警告
+    delayed_move_group = TimerAction(
+        period=14.0,
+        actions=[move_group_launch]
+    )
+    # ==========================================================
+
  
     return LaunchDescription([
         gz_sim,
@@ -233,4 +244,5 @@ def generate_launch_description():
         slam_toolbox_node,
         delayed_nav2,
         delayed_controllers,
+        delayed_move_group,
     ])
