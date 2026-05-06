@@ -1,68 +1,3 @@
-"""
-================================================================================
-COMPONENT: Main Controller Node (Master Logic & FSM)
-================================================================================
-1. STATE MACHINE FLOW (FSM)
---------------------------------------------------------------------------------
-[0] INIT: Probes the hardware graph. Checks if required node topics (Vision, Nav, 
-          Arm) have active publishers/subscribers. Once ready -> [1] SEARCH.
-
-[1] SEARCH: Master sends explore signal to Nav (/nav/cmd_explore). Vision publishes 
-            'camera_link' coords (/detected_object). Master stores local coords, 
-            calculates 'map' coords, and tracks pair status. 
-            Pair Status Flags: [notfound, paired, deferred, solved].
-            Transition: Prioritizes 'paired' colors. If all others are 'solved', 
-            it processes 'deferred'. Once target locked -> [2] MOVE_TO_OBJECT.
-
-[2] MOVE_TO_OBJECT: Master sends object's 'map' pose to Nav (/nav/goal_point). 
-                    Vision continuously updates coordinates. 
-                    Wait for Nav success (/nav/goal_reached) -> [3] GRASP.
-
-[3] GRASP: Master publishes latest 'camera_link' object coords to Arm (/arm/grasp_pose)
-           and close signal to gripper (/arm/grasp_status). After a short delay, 
-           Master sends reset command (/arm/initial_position).
-           Verification: Master checks vision updates. 
-             - If object is absent -> SUCCESS -> [4] MOVE_TO_BOX.
-             - If object still present -> Publish latest coords and open gripper to retry.
-             - If 5 consecutive attempts fail -> Mark as 'deferred' -> [1] SEARCH.
-
-[4] MOVE_TO_BOX: Master sends box 'map' pose to Nav (/nav/goal_point). Vision 
-                 continuously updates coordinates. 
-                 Wait for Nav success (/nav/goal_reached) -> [5] DROP.
-
-[5] DROP: Master publishes box's 'camera_link' pose to Arm (/arm/grasp_pose) to 
-          place the object. After a short delay, Master commands arm to reset 
-          (/arm/initial_position) and closes the gripper. 
-          Marks current pair as 'solved'. Transition -> [1] SEARCH.
-
---------------------------------------------------------------------------------
-2. PUB/SUB INTERFACE REFERENCE
---------------------------------------------------------------------------------
-Publishers (Controller -> Actuators):
-  - /nav/goal_point       (PointStamped) : Target map coordinates for Nav
-  - /nav/cmd_explore      (Bool)         : Enable/Disable random exploration
-  - /nav/target_info      (String)       : Send current task (color + name) to Nav ONCE
-  - /arm/grasp_pose       (CamArmPose)   : Target camera_link coordinates for Arm
-  - /arm/grasp_status     (GripperState) : Control gripper (close/open)
-  - /arm/initial_position (GripperState) : Command arm to return to safe/initial pose
-
-Subscribers (Sensors -> Controller):
-  - /detected_object      (ObjectTarget) : 3D coordinates from Vision
-  - /nav/goal_reached     (Bool)         : Success feedback from Nav
---------------------------------------------------------------------------------
-3. OUTPUT CONTROL MATRIX (Pure Boolean)
---------------------------------------------------------------------------------
-| STATE            | NAV_EXPLORE | NAV_GOTO | ARM_GRASP | ARM_DROP |
-|------------------|-------------|----------|-----------|----------|
-| [0] INIT         | False       | False    | False     | False    |
-| [1] SEARCH       | True        | False    | False     | False    |
-| [2] MOVE_OBJECT  | False       | True     | False     | False    |
-| [3] GRASP        | False       | False    | True      | False    |
-| [4] MOVE_BOX     | False       | True     | False     | False    |
-| [5] DROP         | False       | False    | False     | True     |
-================================================================================
-"""
-
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
@@ -112,7 +47,8 @@ class RobotControlNode(Node):
         self.grasp_attempts = 0         
         self.arm_action_done = False    
         self.check_start_tick = 0       
-        self.arm_timer = None           
+        self.arm_timer = None
+        self.search_start_time = None           
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -169,8 +105,11 @@ class RobotControlNode(Node):
                 self.active_target_color = target_color
                 self.transition_to_state(STATE_MOVE_TO_OBJECT, f"Pair found: {target_color.upper()}")
             elif deferred_color and all_others_solved:
-                self.active_target_color = deferred_color
-                self.transition_to_state(STATE_MOVE_TO_OBJECT, f"Processing deferred: {deferred_color.upper()}")
+                if self.search_start_time is not None:
+                    elapsed_time = (self.get_clock().now() - self.search_start_time).nanoseconds / 1e9
+                    if elapsed_time > 10.0:
+                        self.active_target_color = deferred_color
+                        self.transition_to_state(STATE_MOVE_TO_OBJECT, f"Processing deferred: {deferred_color.upper()}")
 
         elif self.current_state == STATE_GRASP:
             if self.arm_action_done:
@@ -254,6 +193,8 @@ class RobotControlNode(Node):
 
         elif new_state in [STATE_MOVE_TO_OBJECT, STATE_MOVE_TO_BOX, STATE_SEARCH]:
             self.arm_action_done = False
+            if new_state == STATE_SEARCH:
+                self.search_start_time = self.get_clock().now()
 
     def vision_state_callback(self, msg: Bool):
         self.vision_msg_tick += 1
@@ -393,7 +334,7 @@ class RobotControlNode(Node):
         if self.current_state != STATE_INIT:
             self.init_timer.cancel()
             return
-        camera_ready = self.count_publishers('/detected_object') > 0 
+        camera_ready = self.count_publishers('/detection_state') > 0 
         nav_ready    = self.count_subscribers('/nav/goal_point') > 0
         arm_ready    = self.count_subscribers('/arm/grasp_pose') > 0
         if camera_ready and nav_ready and arm_ready:
