@@ -69,6 +69,15 @@ class VisionNodeSim(Node):
 
         # Run YOLO
         results = self.model(color_image, conf=0.5, verbose=False)
+
+        # ==========================================================
+        # 新增：获取带有识别框的图像并展示
+        # ==========================================================
+        annotated_frame = results[0].plot()
+        cv2.imshow("YOLO Detection Window", annotated_frame)
+        cv2.waitKey(1)  # 必须调用 waitKey(1) 才能让 OpenCV 刷新窗口
+        # ==========================================================
+
         state_msg = Bool()
 
         if len(results[0].boxes) == 0:
@@ -178,6 +187,8 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        # 节点销毁前确保关闭 OpenCV 创建的所有窗口
+        cv2.destroyAllWindows() 
         node.destroy_node()
         rclpy.shutdown()
 

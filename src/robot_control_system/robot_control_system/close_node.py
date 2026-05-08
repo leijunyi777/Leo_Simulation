@@ -57,7 +57,7 @@ class TargetFollowerNode(Node):
         # 2. 判断停止条件 (位置误差 < 0.01m)
         distance_error = math.hypot(error_forward, error_lateral)
         if distance_error < 0.01:
-            self.get_logger().info('位置误差小于 0.01m，到达目标，停止运动。', throttle_duration_sec=1.0)
+            self.get_logger().info('The positional error is less than 0.01m. Reach the target and stop the movement.。', throttle_duration_sec=1.0)
             self.prev_time = current_time
             return cmd  # 返回全 0 指令
 
@@ -104,7 +104,7 @@ class TargetFollowerNode(Node):
             stop_cmd = Twist()
             self.pub_cmd.publish(stop_cmd)
             
-            self.get_logger().warn('超过 0.5s 未收到目标更新，发送 0 速度急停！', throttle_duration_sec=1.0)
+            self.get_logger().warn('If no target update is received within 0.5 seconds, send a 0-speed emergency stop!', throttle_duration_sec=1.0)
             
             self.prev_error_forward = 0.0
             self.prev_error_lateral = 0.0

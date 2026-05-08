@@ -435,5 +435,45 @@
       </plugin>
     </gazebo>
 
+    <gazebo>
+      <plugin filename="gz-sim-mimic-joint-system" name="gz::sim::systems::MimicJoint">
+        <joint>${prefix}gripper_controller</joint>
+        <mimicJoint>${prefix}gripper_base_to_gripper_left2</mimicJoint>
+        <multiplier>1.0</multiplier>
+      </plugin>
+    </gazebo>
+
+    <gazebo>
+      <plugin filename="gz-sim-mimic-joint-system" name="gz::sim::systems::MimicJoint">
+        <joint>${prefix}gripper_controller</joint>
+        <mimicJoint>${prefix}gripper_left3_to_gripper_left1</mimicJoint>
+        <multiplier>-1.0</multiplier>
+      </plugin>
+    </gazebo>
+
+    <gazebo>
+      <plugin filename="gz-sim-mimic-joint-system" name="gz::sim::systems::MimicJoint">
+        <joint>${prefix}gripper_controller</joint>
+        <mimicJoint>${prefix}gripper_base_to_gripper_right3</mimicJoint>
+        <multiplier>-1.0</multiplier>
+      </plugin>
+    </gazebo>
+
+    <gazebo>
+      <plugin filename="gz-sim-mimic-joint-system" name="gz::sim::systems::MimicJoint">
+        <joint>${prefix}gripper_controller</joint>
+        <mimicJoint>${prefix}gripper_base_to_gripper_right2</mimicJoint>
+        <multiplier>-1.0</multiplier>
+      </plugin>
+    </gazebo>
+
+    <gazebo>
+      <plugin filename="gz-sim-mimic-joint-system" name="gz::sim::systems::MimicJoint">
+        <joint>${prefix}gripper_controller</joint>
+        <mimicJoint>${prefix}gripper_right3_to_gripper_right1</mimicJoint>
+        <multiplier>1.0</multiplier>
+      </plugin>
+    </gazebo>
+
   </xacro:macro>
 </robot>

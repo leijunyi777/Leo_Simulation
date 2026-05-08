@@ -32,6 +32,7 @@ setup(
             "close_node = robot_control_system.close_node:main",
             "dummy_manipulator = robot_control_system.dummy_manipulator:main",
             "vision_direct_grasp = robot_control_system.vision_direct_grasp:main",
+            "speed_monitor_node = robot_control_system.speed_monitor_node:main",
             #"tf_sim_node = robot_control_system.tf_sim_node:main",
         ],
     },

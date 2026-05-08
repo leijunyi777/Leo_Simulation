@@ -18,7 +18,7 @@ def generate_launch_description():
 
     #模拟仿真配置文件
     urdf_file = os.path.join(leo_pkg_dir, 'urdf', 'leo_sim.urdf.xacro') 
-    world_file = os.path.join(sim_pkg_dir, 'worlds', 'simple_room.sdf')   
+    world_file = os.path.join(sim_pkg_dir, 'worlds', 'demo2.sdf')   
     bridge_config = os.path.join(sim_pkg_dir, 'config', 'bridge.yaml')
 
     # ================= 使用 Command 动态解析 xacro =================
@@ -65,10 +65,18 @@ def generate_launch_description():
         package='ros_gz_sim',
         executable='create',
         arguments=[
-            '-world', 'simple_room',
+            '-world', 'demo2',
             '-topic', 'robot_description', 
             '-name', 'leo_sim', 
             '-z', '0.02',
+            # ▼▼▼ 修改部分开始：新增机械臂初始关节角度 (站立锁死状态) ▼▼▼
+            '-J', 'arm_joint2_to_joint1', '0.0',
+            '-J', 'arm_joint3_to_joint2', '0.0',
+            '-J', 'arm_joint4_to_joint3', '0.0',
+            '-J', 'arm_joint5_to_joint4', '0.0',
+            '-J', 'arm_joint6_to_joint5', '0.0',
+            '-J', 'arm_joint6output_to_joint6', '0.0'
+            # ▲▲▲ 修改部分结束 ▲▲▲
         ],
         output='screen'
     )
@@ -187,57 +195,6 @@ def generate_launch_description():
         parameters=[ekf_config_path,{'use_sim_time': True}]
     )
 
-    # 引入控制器激活节点
-    load_jsb = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["joint_state_broadcaster"],
-        output="screen",
-    )
-
-    load_arm_ctrl = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["arm_controller"],
-        output="screen",
-    )
-
-    # ================= 新增：唤醒夹爪控制器 =================
-    load_gripper_ctrl = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["gripper_controller"], # 这里对应你 yaml 里写的名字
-        output="screen",
-    )
-    # =======================================================
-    
-    # 延迟 10 秒唤醒控制器，确保 Gazebo 已经 spawn 完机器人
-    delayed_controllers = TimerAction(
-        period=10.0,
-        actions=[load_jsb, load_arm_ctrl, load_gripper_ctrl]
-    )
-    
-    # 最后在 return 的 LaunchDescription 里加上 delayed_controllers
-
-    # ================= 新增部分：启动 MoveIt 2 =================
-    # 引入 MoveIt 2 的 move_group
-    move_group_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(get_package_share_directory('mycobot_moveit_config'), 'launch', 'move_group.launch.py')
-        ),
-        launch_arguments={
-            'use_sim_time': 'true'
-        }.items()
-    )
-
-    # 延迟 14 秒启动 MoveIt，确保底层的 controller (10秒启动) 已经准备就绪
-    # 这样可以避免 move_group 报 "Failed to fetch current robot state" 的警告
-    delayed_move_group = TimerAction(
-        period=14.0,
-        actions=[move_group_launch]
-    )
-    # ==========================================================
-
  
     return LaunchDescription([
         gz_sim,
@@ -252,6 +209,4 @@ def generate_launch_description():
         rviz2_node,
         slam_toolbox_node,
         delayed_nav2,
-        delayed_controllers,
-        delayed_move_group,
     ])
